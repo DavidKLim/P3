@@ -15,4 +15,4 @@
 ## Perhaps easier to split by case:
 # Case 1: Missing response y (bios 773, slide 279, take out random effects Z)
 # Case 2: Missing covariate x (bios 773, slide 357, take out random effects Z)
-# Case 3: Missing both (maybe?) (bios 773, slide 357, take out random effects Zdss)
+# Case 3: Missing both (maybe?) (bios 773, slide 357, take out random effects Z)
