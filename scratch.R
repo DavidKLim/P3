@@ -121,16 +121,20 @@ save_toy_data = function(N=100000, P=2, pi=0.5, sim_index=1, seed=9, mechanism="
   Xs = split(data.frame(X), g)        # split by $train, $test, and $valid
   Ys = split(data.frame(Y), g)        # split by $train, $test, and $valid
   Rs = split(data.frame(R), g)
+  pRs = split(data.frame(pR),g)
   
   write.csv(Xs$train,file=sprintf("%s/trainX.csv",save.dir),row.names = F)
   write.csv(Ys$train,file=sprintf("%s/trainY.csv",save.dir),row.names = F)
   write.csv(Rs$train,file=sprintf("%s/trainR.csv",save.dir),row.names = F)
+  write.csv(pRs$train,file=sprintf("%s/trainpR.csv",save.dir),row.names = F)
   write.csv(Xs$valid,file=sprintf("%s/validX.csv",save.dir),row.names = F)
   write.csv(Ys$valid,file=sprintf("%s/validY.csv",save.dir),row.names = F)
   write.csv(Rs$valid,file=sprintf("%s/validR.csv",save.dir),row.names = F)
+  write.csv(pRs$valid,file=sprintf("%s/validpR.csv",save.dir),row.names = F)
   write.csv(Xs$test,file=sprintf("%s/testX.csv",save.dir),row.names = F)
   write.csv(Ys$test,file=sprintf("%s/testY.csv",save.dir),row.names = F)
   write.csv(Rs$test,file=sprintf("%s/testR.csv",save.dir),row.names = F)
+  write.csv(pRs$test,file=sprintf("%s/testpR.csv",save.dir),row.names = F)
   
   params = list(phis=phis,
                 beta0=beta0,
