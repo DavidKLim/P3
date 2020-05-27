@@ -160,6 +160,7 @@ save_toy_data = function(N=100000, P=2, pi=0.5, sim_index=1, seed=9, mechanism="
   params = list(phi0=phi0,phis=phis,
                 beta0=beta0,
                 betas=betas,
+                miss_cols=miss_cols,ref_cols=ref_cols,
                 e=e,
                 N=N,P=P,pi=pi,sim_index=sim_index,seed=seed,mechanism=mechanism)
   save(list=c("X","Y","R","pR","g","params"),file=sprintf("%s/sim_params.RData",save.dir))
