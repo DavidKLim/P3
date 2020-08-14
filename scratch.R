@@ -1,6 +1,6 @@
-N=100000; P=2; pi=0.5; sim_index=1; seed=9; mechanism="MNAR"
+N=100000; P=2; pi=0.5; sim_index=1; seed=9; mechanism="MNAR"; miss_cols = 1; ref_cols = 2
 
-save_toy_data = function(N=100000, P=2, pi=0.5, sim_index=1, seed=9, mechanism="MNAR"){
+save_toy_data = function(N=100000, P=2, pi=0.5, sim_index=1, seed=9, mechanism="MNAR", miss_cols = 1, ref_cols = 2){
   save.dir = sprintf("toy_data/%s",mechanism)
   
   # Simulate X
@@ -97,20 +97,41 @@ save_toy_data = function(N=100000, P=2, pi=0.5, sim_index=1, seed=9, mechanism="
                 probs=prob_Missing,params=params))
   }
   
-  fit_missing = simulate_missing(data = X, miss_cols = 1, ref_cols = 2, pi = pi,
+  fit_missing = simulate_missing(data = X, miss_cols = miss_cols, ref_cols = ref_cols, pi = pi,
                                  phis = phis, phi_z=NULL, classes=NULL, scheme="UV",
                                  mechanism=mechanism, sim_index=sim_index, fmodel="S", Z=NULL)
-  
+  phi0 = fit_missing$params[[1]]$phi0
   R = fit_missing$Missing
   pR = fit_missing$probs
   
-  ## Test
-  # fit = glm(Y~X)
-  # summary(fit)
-  # X0 = X; X0[R==0]=0
-  # fit0 = glm(Y~X0)
-  # summary(fit0)
+  ## Tests
+  fit = glm(Y~X)
+  summary(fit)
+  X0 = X; X0[R==0]=0
+  fit0 = glm(Y~X0)
+  summary(fit0)
   
+  overlap_hists=function(x1,x2,x3=NULL,lab1="Truth",lab2="Imputed",lab3="...",
+                         title="MNAR Missing Values, Truth vs Imputed, Missing column"){
+    library(ggplot2)
+    x1=data.frame(value=x1); x1$status=lab1
+    x2=data.frame(value=x2); x2$status=lab2
+    if(!is.null(x3)){x3=data.frame(value=x3); x3$status=lab3; df=rbind(x1,x2,x3)
+    }else{df = rbind(x1,x2)}
+    p = ggplot(df,aes(value,fill=status)) + geom_density(alpha=0.2) + ggtitle(title)
+    print(p)
+  }
+
+  overlap_hists(x1=X[R[,miss_cols[1]]==0, miss_cols[1]], lab1="Missing",
+                x2=X[R[,miss_cols[1]]==1, miss_cols[1]], lab2="Observed",
+                title=sprintf("%s: histogram of missing vs observed X values of column %d, wrt missingness of column %d",
+                              mechanism, miss_cols[1], miss_cols[1]))
+  overlap_hists(x1=X[R[,miss_cols[1]]==0, ref_cols[1]], lab1="Missing",
+                x2=X[R[,miss_cols[1]]==1, ref_cols[1]], lab2="Observed",
+                title=sprintf("%s histogram of missing vs observed X values of column %d, wrt missingness of column %d",
+                              mechanism, ref_cols[1], miss_cols[1]))
+  
+  ## Save
   ratios=c(train = .6, test = .2, valid = .2)
   set.seed(333)
   g = sample(cut(
@@ -136,9 +157,10 @@ save_toy_data = function(N=100000, P=2, pi=0.5, sim_index=1, seed=9, mechanism="
   write.csv(Rs$test,file=sprintf("%s/testR.csv",save.dir),row.names = F)
   write.csv(pRs$test,file=sprintf("%s/testpR.csv",save.dir),row.names = F)
   
-  params = list(phis=phis,
+  params = list(phi0=phi0,phis=phis,
                 beta0=beta0,
                 betas=betas,
+                miss_cols=miss_cols,ref_cols=ref_cols,
                 e=e,
                 N=N,P=P,pi=pi,sim_index=sim_index,seed=seed,mechanism=mechanism)
   save(list=c("X","Y","R","pR","g","params"),file=sprintf("%s/sim_params.RData",save.dir))
