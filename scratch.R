@@ -1,8 +1,10 @@
-N=100000; P=2; pi=0.5; sim_index=1; seed=9; mechanism="MNAR"
+
+N=100000; P=2; pi=0.5; sim_index=1; seed=9; mechanism="MNAR"; miss_cols=1; ref_cols=2
 
 save_toy_data = function(case=c("x","y","xy"),
                          N=100000, P=2, pi=0.5, sim_index=1, seed=9, mechanism="MNAR", miss_cols = 1, ref_cols = 2){
   save.dir = sprintf("toy%s_data/%s",case,mechanism)
+  ifelse(dir.exists(save.dir),F,dir.create(save.dir,recursive=T))
   
   # Simulate X
   set.seed(seed)
@@ -80,7 +82,7 @@ save_toy_data = function(case=c("x","y","xy"),
           phi = phi_z # phis should be length Z
         }
       }
-      alph <- sapply(pi, function(y)find_int(y,phi))
+      alph <- sapply(pi, function(y) find_int(y,phi))
       mod = alph + x%*%phi
       
       # Pr(Missing_i = 1)
@@ -98,44 +100,91 @@ save_toy_data = function(case=c("x","y","xy"),
                 probs=prob_Missing,params=params))
   }
   
-  if(case %in% c("x","xy")){
-    fit_missing = simulate_missing(data = X, miss_cols = miss_cols, ref_cols = ref_cols, pi = pi,
-                                   phis = phis, phi_z=NULL, classes=NULL, scheme="UV",
-                                   mechanism=mechanism, sim_index=sim_index, fmodel="S", Z=NULL)
-    
-    Rx = fit_missing$Missing
-    pRx = fit_missing$probs
-  }
-  # sim y missing here: y missing can be dep on y and x
-  if(case %in% c("y","xy")){
-    
-  }
-  
-  ## Tests
+  # Without missingness: coefficients look good
   fit = glm(Y~X)
-  summary(fit)X0 = X; X0[Rx==0]=0
-  fit0 = glm(Y~X0)
-  summary(fit0)
+  print(summary(fit))
+  
+  # save diagnostics, simulate missingness
+  save.dir2 = sprintf("%s/Diagnostics",save.dir)
+  ifelse(dir.exists(save.dir2),F,dir.create(save.dir2,recursive=T))
   
   overlap_hists=function(x1,x2,x3=NULL,lab1="Truth",lab2="Imputed",lab3="...",
-                         title="MNAR Missing Values, Truth vs Imputed, Missing column"){
+                         title="MNAR Missing Values, Truth vs Imputed, Missing column",
+                         save.dir, file.name){
     library(ggplot2)
     x1=data.frame(value=x1); x1$status=lab1
     x2=data.frame(value=x2); x2$status=lab2
     if(!is.null(x3)){x3=data.frame(value=x3); x3$status=lab3; df=rbind(x1,x2,x3)
     }else{df = rbind(x1,x2)}
     p = ggplot(df,aes(value,fill=status)) + geom_density(alpha=0.2) + ggtitle(title)
+    ggsave(filename=sprintf("%s/%s.png",save.dir,file.name),plot=p)
     print(p)
   }
+  
+  Rx=matrix(1,nrow=nrow(X),ncol=ncol(X)); pRx=matrix(1,nrow=nrow(X),ncol=ncol(X))
+  Ry=matrix(1,nrow=nrow(Y),ncol=ncol(Y)); pRy=matrix(1,nrow=nrow(Y),ncol=ncol(Y))
+  if(case %in% c("x","xy")){
+    # if MAR: ref cols and miss cols paired, each ref col is covariate for each miss col
+    # if MNAR: itself is covariate for each miss col
+    fit_missing = simulate_missing(data = X, miss_cols = miss_cols, ref_cols = ref_cols, pi = pi,
+                                   phis = phis, phi_z=NULL, classes=NULL, scheme="UV",
+                                   mechanism=mechanism, sim_index=sim_index, fmodel="S", Z=NULL)
+    
+    Rx = fit_missing$Missing
+    pRx = fit_missing$probs
+    overlap_hists(x1=X[Rx[,miss_cols[1]]==0, miss_cols[1]], lab1="Missing",
+                  x2=X[Rx[,miss_cols[1]]==1, miss_cols[1]], lab2="Observed",
+                  title=sprintf("%s: Values of col%d of X (miss), wrt missingness of column %d (miss)",
+                                mechanism, miss_cols[1], miss_cols[1]),
+                  save.dir=save.dir2, file.name="X MNAR check")
+    overlap_hists(x1=X[Rx[,miss_cols[1]]==0, ref_cols[1]], lab1="Missing",
+                  x2=X[Rx[,miss_cols[1]]==1, ref_cols[1]], lab2="Observed",
+                  title=sprintf("%s: Values of col%d of X (obs), wrt missingness of column %d (miss)",
+                                mechanism, ref_cols[1], miss_cols[1]),
+                  save.dir=save.dir2, file.name="X MAR check")
+  }
+  # sim y missing here: y missing can be dep on y and x
+  if(case %in% c("y","xy")){
+    XY = data.frame(cbind(X[,ref_cols[1]],Y))
 
-  overlap_hists(x1=X[Rx[,miss_cols[1]]==0, miss_cols[1]], lab1="Missing",
-                x2=X[Rx[,miss_cols[1]]==1, miss_cols[1]], lab2="Observed",
-                title=sprintf("%s: histogram of missing vs observed X values of column %d, wrt missingness of column %d",
-                              mechanism, miss_cols[1], miss_cols[1]))
-  overlap_hists(x1=X[Rx[,miss_cols[1]]==0, ref_cols[1]], lab1="Missing",
-                x2=X[Rx[,miss_cols[1]]==1, ref_cols[1]], lab2="Observed",
-                title=sprintf("%s histogram of missing vs observed X values of column %d, wrt missingness of column %d",
-                              mechanism, ref_cols[1], miss_cols[1]))
+    # if MAR: first ref_cols will be used as covariate for y's missingness
+    # if MNAR: y itself will be used for y's missingness
+    
+    fit_missing = simulate_missing(data = XY, miss_cols = 2, ref_cols = 1,
+                                   pi=pi, phis=phis, phi_z=NULL, classes=NULL, scheme="UV",
+                                   mechanism=mechanism, sim_index=sim_index, fmodel="S", Z=NULL)
+    Ry = matrix(fit_missing$Missing[,2],ncol=1)
+    pRy = matrix(fit_missing$probs[,2],ncol=1)
+    
+    overlap_hists(x1=Y[Ry[,1]==0, 1], lab1="Missing",
+                  x2=Y[Ry[,1]==1, 1], lab2="Observed",
+                  title=sprintf("%s: Values of Y, wrt missingness of Y",
+                                mechanism),
+                  save.dir=save.dir2, file.name="Y MNAR check")
+    overlap_hists(x1=X[Ry[,1]==0, ref_cols[1]], lab1="Missing",
+                  x2=X[Ry[,1]==1, ref_cols[1]], lab2="Observed",
+                  title=sprintf("%s: Values of col%d of X (obs), wrt missingness of Y",
+                                mechanism, ref_cols[1]),
+                  save.dir=save.dir2, file.name="Y MAR check")
+  }
+  
+  ## Tests
+  if(case=="x"){
+    X0 = X; X0[Rx==0]=0
+    Y0 = Y
+  }else if(case=="y"){
+    Y0 = Y; Y0[Ry==0]=0
+    X0 = X
+  }else if(case=="xy"){
+    X0 = X; X0[Rx==0]=0
+    Y0 = Y; Y0[Ry==0]=0
+  }
+
+  fit0 = glm(Y0~X0)
+  print(summary(fit0))
+  
+  
+  ## overlap hists with y?
   
   ## Save
   ratios=c(train = .6, test = .2, valid = .2)
@@ -149,29 +198,46 @@ save_toy_data = function(case=c("x","y","xy"),
   Ys = split(data.frame(Y), g)        # split by $train, $test, and $valid
   Rxs = split(data.frame(Rx), g)
   pRxs = split(data.frame(pRx),g)
+  Rys = split(data.frame(Ry), g)
+  pRys = split(data.frame(pRy),g)
   
   write.csv(Xs$train,file=sprintf("%s/trainX.csv",save.dir),row.names = F)
   write.csv(Ys$train,file=sprintf("%s/trainY.csv",save.dir),row.names = F)
-  write.csv(Rs$train,file=sprintf("%s/trainRx.csv",save.dir),row.names = F)
-  write.csv(pRs$train,file=sprintf("%s/trainpRx.csv",save.dir),row.names = F)
+  write.csv(Rxs$train,file=sprintf("%s/trainRx.csv",save.dir),row.names = F)
+  write.csv(pRxs$train,file=sprintf("%s/trainpRx.csv",save.dir),row.names = F)
+  write.csv(Rys$train,file=sprintf("%s/trainRy.csv",save.dir),row.names = F)
+  write.csv(pRys$train,file=sprintf("%s/trainpRy.csv",save.dir),row.names = F)
+  
   write.csv(Xs$valid,file=sprintf("%s/validX.csv",save.dir),row.names = F)
   write.csv(Ys$valid,file=sprintf("%s/validY.csv",save.dir),row.names = F)
-  write.csv(Rs$valid,file=sprintf("%s/validRx.csv",save.dir),row.names = F)
-  write.csv(pRs$valid,file=sprintf("%s/validpRx.csv",save.dir),row.names = F)
+  write.csv(Rxs$valid,file=sprintf("%s/validRx.csv",save.dir),row.names = F)
+  write.csv(pRxs$valid,file=sprintf("%s/validpRx.csv",save.dir),row.names = F)
+  write.csv(Rys$valid,file=sprintf("%s/validRy.csv",save.dir),row.names = F)
+  write.csv(pRys$valid,file=sprintf("%s/validpRy.csv",save.dir),row.names = F)
+  
   write.csv(Xs$test,file=sprintf("%s/testX.csv",save.dir),row.names = F)
   write.csv(Ys$test,file=sprintf("%s/testY.csv",save.dir),row.names = F)
-  write.csv(Rs$test,file=sprintf("%s/testRx.csv",save.dir),row.names = F)
-  write.csv(pRs$test,file=sprintf("%s/testpRx.csv",save.dir),row.names = F)
+  write.csv(Rxs$test,file=sprintf("%s/testRx.csv",save.dir),row.names = F)
+  write.csv(pRxs$test,file=sprintf("%s/testpRx.csv",save.dir),row.names = F)
+  write.csv(Rys$test,file=sprintf("%s/testRy.csv",save.dir),row.names = F)
+  write.csv(pRys$test,file=sprintf("%s/testpRy.csv",save.dir),row.names = F)
   
   params = list(phis=phis,
                 beta0=beta0,
                 betas=betas,
                 e=e,
                 N=N,P=P,pi=pi,sim_index=sim_index,seed=seed,mechanism=mechanism)
-  save(list=c("X","Y","Rx","pRx","g","params"),file=sprintf("%s/sim_params.RData",save.dir))
+  save(list=c("X","Y","Rx","pRx","Ry","pRy","g","params"),file=sprintf("%s/sim_params.RData",save.dir))
 }
 
-save_toy_data(mechanism="MCAR"); save_toy_data(mechanism="MAR"); save_toy_data(mechanism="MNAR")
+cases = c("x","y","xy")
+mechanisms=c("MCAR","MAR","MNAR")
+
+for(c in 1:length(cases)){
+  for(m in 1:length(mechanisms)){
+    save_toy_data(mechanism=mechanisms[m], case=cases[c])
+  }
+}
 ## High level overview of architecture:
 # NN1: Input Xo and Xm=0, Output: Xo and Xm'
 # NN2: Input Xo and Xm', Output: Y
