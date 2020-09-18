@@ -1,23 +1,65 @@
 
 N=100000; P=2; pi=0.5; sim_index=1; seed=9; mechanism="MNAR"; miss_cols=1; ref_cols=2
 
-save_toy_data = function(case=c("x","y","xy"),
+save_toy_data = function(case=c("x","y","xy"), family="Gaussian", data_types = rep("real", P),
                          N=100000, P=2, pi=0.5, sim_index=1, seed=9, mechanism="MNAR", miss_cols = 1, ref_cols = 2){
   save.dir = sprintf("toy%s_data/%s",case,mechanism)
   ifelse(dir.exists(save.dir),F,dir.create(save.dir,recursive=T))
   
-  # Simulate X
-  set.seed(seed)
-  X = matrix(rnorm(N*P,mean=4,sd=1), nrow=N, ncol=P)
+  C=3   # 3 classes as default for all categorical X (data_types=="cat"), and for Y if family=="Multinomial"
   
-  # Simulate y from X --> y = Xb + e
-  beta0 = 0
-  betas = c(-1,1)   # effect sizes -1 and 1 test case. Must be of length P
-  e = rnorm(N,0,1)
-  Y = beta0 + X %*% betas + e
+  # Simulate X
+  X = matrix(nrow=N, ncol=P)
+  set.seed(seed)
+  for(p in 1:P){
+    if(data_types[p]=="real"){
+      X[, p] = rnorm(N,mean=4,sd=1)
+    } else if(data_types[p]=="cat"){
+      #### commented out for now; just deal with Gaussian covariates for now...
+      # X[, p] = apply(rmultinom(N, 1, rep(1/C,C)), 2, which.max)
+      ### for categorical data, we have to create dummy variables for categories.... (in simulating Y)
+    } else if(data_types[p]=="count"){
+      X[, p] = rpois(N, lambda=8)
+    }
+  }
+  
+  
+  # family="Gaussian" --> Gaussian data for Y
+  if(family=="Gaussian"){
+    # Simulate y from X --> y = Xb + e
+    beta0s = 0
+    betas = c(-1,1)   # effect sizes -1 and 1 test case. Must be of length P
+    # e = rnorm(N,0,1)
+    # Y = beta0s + X %*% betas + e
+    Y = beta0s + X %*% betas
+  } else if(family=="Multinomial"){
+    # beta0s = rnorm(C, 0, 1)
+    # betas = cbind(rnorm(C, -1, 1), rnorm(C, 1, 1))   # C x P matrix: each covariates' effects on each class
+    beta0s = 0
+    betas = cbind(-c(1:C),c(1:C))
+    prs = exp(matrix(beta0s,nrow=N,ncol=C,byrow=T) + X %*% t(betas))
+    prs = prs/rowSums(prs)
+    Y = apply(prs, 1, sample, x=c(1:C), size=1, replace=F)
+  } else if(family=="Poisson"){
+    beta0s = 0
+    betas = c(-1,1)   # effect sizes -1 and 1 test case. Must be of length P
+    Y = round(exp(beta0s + X %*% betas),0)   # log(Y) = eta. Round Y to integer (to simulate count)
+  }
   hist(Y)
   #y2 = rnorm(N*P, X%*%betas, 1)  # distrib of y and y2 should be equivalent
   #hist(y2)
+  
+  # covariate matrix
+  mX = matrix(rnorm(1000), 200, 5)
+  # coefficients for each choice
+  vCoef1 = rep(0, 5)
+  vCoef2 = rnorm(5)
+  vCoef3 = rnorm(5)
+  # vector of probabilities
+  vProb = cbind(exp(mX%*%vCoef1), exp(mX%*%vCoef2), exp(mX%*%vCoef3))
+  # multinomial draws
+  mChoices = t(apply(vProb, 1, rmultinom, n = 1, size = 1))
+  dfM = cbind.data.frame(y = apply(mChoices, 1, function(x) which(x==1)), mX)
   
   # Simulate R from x and/or y
   phis = c(-2,2)
@@ -145,7 +187,7 @@ save_toy_data = function(case=c("x","y","xy"),
   }
   # sim y missing here: y missing can be dep on y and x
   if(case %in% c("y","xy")){
-    XY = data.frame(cbind(X[,ref_cols[1]],Y))
+    XY = data.frame(cbind(X[,ref_cols[1]],Y))   # only the fully observed X feature and missingness imposed y feature input (as covariates in MAR and MNAR, respectively)
 
     # if MAR: first ref_cols will be used as covariate for y's missingness
     # if MNAR: y itself will be used for y's missingness
@@ -223,7 +265,7 @@ save_toy_data = function(case=c("x","y","xy"),
   write.csv(pRys$test,file=sprintf("%s/testpRy.csv",save.dir),row.names = F)
   
   params = list(phis=phis,
-                beta0=beta0,
+                beta0s=beta0s,
                 betas=betas,
                 e=e,
                 N=N,P=P,pi=pi,sim_index=sim_index,seed=seed,mechanism=mechanism)
