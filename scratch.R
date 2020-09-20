@@ -3,7 +3,7 @@ N=100000; P=2; pi=0.5; sim_index=1; seed=9; mechanism="MNAR"; miss_cols=1; ref_c
 
 save_toy_data = function(case=c("x","y","xy"), family="Gaussian", data_types = rep("real", P),
                          N=100000, P=2, pi=0.5, sim_index=1, seed=9, mechanism="MNAR", miss_cols = 1, ref_cols = 2){
-  save.dir = sprintf("toy%s_data/%s",case,mechanism)
+  save.dir = sprintf("%s/toy%s_data/%s",family,case,mechanism)
   ifelse(dir.exists(save.dir),F,dir.create(save.dir,recursive=T))
   
   C=3   # 3 classes as default for all categorical X (data_types=="cat"), and for Y if family=="Multinomial"
@@ -41,25 +41,28 @@ save_toy_data = function(case=c("x","y","xy"), family="Gaussian", data_types = r
     prs = prs/rowSums(prs)
     Y = apply(prs, 1, sample, x=c(1:C), size=1, replace=F)
   } else if(family=="Poisson"){
-    beta0s = 0
+    beta0s = 8
     betas = c(-1,1)   # effect sizes -1 and 1 test case. Must be of length P
     Y = round(exp(beta0s + X %*% betas),0)   # log(Y) = eta. Round Y to integer (to simulate count)
   }
+  Y = matrix(Y,ncol=1)
   hist(Y)
   #y2 = rnorm(N*P, X%*%betas, 1)  # distrib of y and y2 should be equivalent
   #hist(y2)
   
-  # covariate matrix
-  mX = matrix(rnorm(1000), 200, 5)
-  # coefficients for each choice
-  vCoef1 = rep(0, 5)
-  vCoef2 = rnorm(5)
-  vCoef3 = rnorm(5)
-  # vector of probabilities
-  vProb = cbind(exp(mX%*%vCoef1), exp(mX%*%vCoef2), exp(mX%*%vCoef3))
-  # multinomial draws
-  mChoices = t(apply(vProb, 1, rmultinom, n = 1, size = 1))
-  dfM = cbind.data.frame(y = apply(mChoices, 1, function(x) which(x==1)), mX)
+  
+  ## Example multinomial data sim
+  # # covariate matrix
+  # mX = matrix(rnorm(1000), 200, 5)
+  # # coefficients for each choice
+  # vCoef1 = rep(0, 5)
+  # vCoef2 = rnorm(5)
+  # vCoef3 = rnorm(5)
+  # # vector of probabilities
+  # vProb = cbind(exp(mX%*%vCoef1), exp(mX%*%vCoef2), exp(mX%*%vCoef3))
+  # # multinomial draws
+  # mChoices = t(apply(vProb, 1, rmultinom, n = 1, size = 1))
+  # dfM = cbind.data.frame(y = apply(mChoices, 1, function(x) which(x==1)), mX)
   
   # Simulate R from x and/or y
   phis = c(-2,2)
@@ -143,7 +146,16 @@ save_toy_data = function(case=c("x","y","xy"), family="Gaussian", data_types = r
   }
   
   # Without missingness: coefficients look good
-  fit = glm(Y~X)
+  if(family=="Gaussian"){
+    fit = glm(Y~X)
+  }else if(family=="Multinomial"){
+    # fit=glm(as.factor(Y) ~ X, family = binomial(link="logit"))
+    library(nnet)
+    fit=multinom(Y~X)
+  }else if(family=="Poisson"){
+    fit=glm(Y ~ X, family = poisson(link="log"))
+  }
+  
   print(summary(fit))
   
   # save diagnostics, simulate missingness
@@ -221,8 +233,18 @@ save_toy_data = function(case=c("x","y","xy"), family="Gaussian", data_types = r
     X0 = X; X0[Rx==0]=0
     Y0 = Y; Y0[Ry==0]=0
   }
-
-  fit0 = glm(Y0~X0)
+  
+  # Without missingness: coefficients look good
+  if(family=="Gaussian"){
+    fit0 = glm(Y0~X0)
+  }else if(family=="Multinomial"){
+    # fit=glm(as.factor(Y) ~ X, family = binomial(link="logit"))
+    library(nnet)
+    fit0=multinom(Y0~X0)
+  }else if(family=="Poisson"){
+    fit0=glm(Y0 ~ X0, family = poisson(link="log"))
+  }
+  
   print(summary(fit0))
   
   
@@ -267,17 +289,20 @@ save_toy_data = function(case=c("x","y","xy"), family="Gaussian", data_types = r
   params = list(phis=phis,
                 beta0s=beta0s,
                 betas=betas,
-                e=e,
+                #e=e,
                 N=N,P=P,pi=pi,sim_index=sim_index,seed=seed,mechanism=mechanism)
   save(list=c("X","Y","Rx","pRx","Ry","pRy","g","params"),file=sprintf("%s/sim_params.RData",save.dir))
 }
 
-cases = c("x","y","xy")
+# cases = c("x","y","xy")
+cases = c("x")
 mechanisms=c("MCAR","MAR","MNAR")
 
 for(c in 1:length(cases)){
   for(m in 1:length(mechanisms)){
-    save_toy_data(mechanism=mechanisms[m], case=cases[c])
+    # save_toy_data(family="Gaussian", mechanism=mechanisms[m], case=cases[c])
+    save_toy_data(family="Multinomial", mechanism=mechanisms[m], case=cases[c])
+    save_toy_data(family="Poisson", mechanism=mechanisms[m], case=cases[c])
   }
 }
 ## High level overview of architecture:
