@@ -134,16 +134,16 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   n_params_r = p_miss*(miss_x) + 1*(miss_y) # Bernoulli (prob. p features in X) --> 1 if missing in y and not X
 
 
-  def network_maker(act_fun, n_hidden_layers, in_h, h, out_h, dropout=False):
+  def network_maker(act_fun, n_hidden_layers, in_h, h, out_h, bias=True, dropout=False):
     # create NN layers
     if n_hidden_layers==0:
-      layers = [ nn.Linear(in_h, out_h), ]
+      layers = [ nn.Linear(in_h, out_h, bias), ]
     elif n_hidden_layers>0:
-      layers = [ nn.Linear(in_h , h), act_fun, ]
+      layers = [ nn.Linear(in_h , h, bias), act_fun, ]
       for i in range(n_hidden_layers-1):
-        layers.append( nn.Linear(h, h), )
+        layers.append( nn.Linear(h, h, bias), )
         layers.append( act_fun, )
-      layers.append(nn.Linear(h, out_h))
+      layers.append(nn.Linear(h, out_h, bias))
     elif n_hidden_layers<0:
       raise Exception("n_hidden_layers must be >= 0")
     
@@ -161,13 +161,13 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     
     return model
   
-  if miss_x: NN_xm = network_maker(act_fun, n_hidden_layers, 2*p, h1, n_params_xm, False).cuda()
+  if miss_x: NN_xm = network_maker(act_fun, n_hidden_layers, 2*p, h1, n_params_xm, False, True).cuda()
   else: NN_xm = None
-  if miss_y: NN_ym = network_maker(act_fun, n_hidden_layers, p+2, h1, n_params_ym, False).cuda()
+  if miss_y: NN_ym = network_maker(act_fun, n_hidden_layers, p+2, h1, n_params_ym, False, True).cuda()
   else: NN_ym = None
-  NN_y = network_maker(act_fun, 0, p, h2, n_params_y, False).cuda()
+  NN_y = network_maker(act_fun, 0, p, h2, n_params_y, False, False).cuda()
 
-  if not Ignorable: NN_r = network_maker(act_fun, n_hidden_layers_r, pr, h3, n_params_r, False).cuda()
+  if not Ignorable: NN_r = network_maker(act_fun, n_hidden_layers_r, pr, h3, n_params_r, False, True).cuda()
   else: NN_r=None
   # can initialize NN_ym if missingness detected in y , NN_xm if missingness detected in x
 
@@ -843,4 +843,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     if miss_x: all_params['xm'] = {'mean':loss_fit['params_xm']['mean'].cpu().data.numpy(),'scale':loss_fit['params_xm']['scale'].cpu().data.numpy()}
     if miss_y: all_params['ym'] = {'mean':loss_fit['params_ym']['mean'].cpu().data.numpy(),'scale':loss_fit['params_ym']['scale'].cpu().data.numpy()}
     
-    return {'loss_fit':loss_fit,'impute_fit':impute_fit,'saved_model': saved_model,'all_params':all_params,'LB': LB,'time_impute': time_impute,'MSE': mse_test, 'xhat': xhat, 'yhat':yhat, 'xfull': xfull, 'yfull':yfull, 'mask_x': mask_x, 'mask_y':mask_y, 'norm_means_x':norm_means_x, 'norm_sds_x':norm_sds_x,'norm_mean_y':norm_mean_y, 'norm_sd_y':norm_sd_y}
+    train_params = {'h1':h1, 'h2':h2, 'h3':h3, 'sigma':sigma, 'bs':bs, 'n_epochs':n_epochs, 'lr':lr, 'L':L, 'M':M, 'covars_r_x':covars_r_x, 'covars_r_y':covars_r_y, 'n_hidden_layers':n_hidden_layers, 'n_hidden_layers_r':n_hidden_layers_r, 'pre_impute_value':pre_impute_value}
+    
+    # w0 = (NN_y[0].bias).cpu().data.numpy()
+    w = (NN_y[0].weight).cpu().data.numpy()
+    return {'w':w,'train_params':train_params,'loss_fit':loss_fit,'impute_fit':impute_fit,'saved_model': saved_model,'all_params':all_params,'LB': LB,'time_impute': time_impute,'MSE': mse_test, 'xhat': xhat, 'yhat':yhat, 'xfull': xfull, 'yfull':yfull, 'mask_x': mask_x, 'mask_y':mask_y, 'norm_means_x':norm_means_x, 'norm_sds_x':norm_sds_x,'norm_mean_y':norm_mean_y, 'norm_sd_y':norm_sd_y}

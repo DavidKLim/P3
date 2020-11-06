@@ -1,6 +1,6 @@
 
 tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, learn_r, Ignorable,
-                            family, link){
+                            family, link, normalize){
   # (family, link) = (Gaussian, identity), (Multinomial, mlogit), (Poisson, log)
   library(reticulate)
   
@@ -16,15 +16,21 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
 
   # dim_z --> as.integer() does floor()
   sigma="elu"; hs=c(64L,128L); bss=c(10000L); lrs=c(0.001,0.01); impute_bs = bss[1]; arch="IWAE"
-  niws=5L; n_epochss=2002L; n_hidden_layers = c(1L, 2L)
+  niws=5L; n_epochss=5002L; n_hidden_layers = c(1L, 2L)
   
   # misc fixed params:
   add_miss_term = F; draw_miss = T; pre_impute_value = 0; sigma="elu"
   n_hidden_layers_r=0; h3=0  # no hidden layers in decoder_r, no nodes in that hidden layer (doesn't matter what h3 is)
   phi0=NULL; phi=NULL # only input when using logistic regression (known coefs)
   
-  norm_means_x=colMeans(Xs$train, na.rm=T); norm_sds_x=apply(Xs$train,2,function(y) sd(y,na.rm=T))
-  norm_mean_y=colMeans(Ys$train, na.rm=T); norm_sd_y=apply(Ys$train,2,function(y) sd(y,na.rm=T))
+  if(normalize){
+    norm_means_x=colMeans(Xs$train, na.rm=T); norm_sds_x=apply(Xs$train,2,function(y) sd(y,na.rm=T))
+    norm_mean_y=colMeans(Ys$train, na.rm=T); norm_sd_y=apply(Ys$train,2,function(y) sd(y,na.rm=T))
+    dir_name = sprintf("%s/with_normalization",dir_name)
+  }else{
+    norm_means_x = rep(0, P); norm_sds_x = rep(1, P)
+    norm_mean_y = 0; norm_sd_y = 1
+  }
   
   LBs_trainVal = matrix(nrow = length(hs)*length(bss)*length(lrs)*length(niws)*length(n_epochss)*length(n_hidden_layers),
                         ncol = 12)
@@ -89,7 +95,7 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
   load(sprintf("%s/temp_opt_train.out",dir_name))
   train_params=res_train$train_params
   
-  res_test = dlglm(np$array(Xs$valid), np$array(Rxs$valid), np$array(Ys$valid), np$array(Rys$valid),
+  res_test = dlglm(np$array(Xs$test), np$array(Rxs$test), np$array(Ys$test), np$array(Rys$test),
                     np$array(covars_r_x), np$array(covars_r_y),
                     np$array(norm_means_x), np$array(norm_sds_x), np$array(norm_mean_y), np$array(norm_sd_y),
                     learn_r, Ignorable, family, link,
@@ -99,22 +105,25 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
                     0, saved_model, sigma, train_params$bs, 2L,
                     train_params$lr, train_params$L, train_params$M, trace=T)
   
-  return(res_test)
+  fixed.params = list(dir_name=dir_name, covars_r_x=covars_r_x, covars_r_y=covars_r_y, learn_r=learn_r, Ignorable=Ignorable, family=family, link=link)
+  
+  return(list(results=res_test, fixed.params=fixed.params))
   
 }
 
 N=1e5; P=8; data_types=rep("real",P); family="Gaussian"; link="identity"
 dataset = sprintf("SIM_N%d_P%d_X%s_Y%s", N, P, data_types[1], family)
-case = "x"; pi=0.5
+case = "x"; pi=0.5; phi0=100
 
 learn_r = T; covars_r_x = rep(1,P); covars_r_y = 1  # include all
 Ignorable=F
 
-mechanisms=c("MCAR","MAR","MNAR"); sim_indexes = 1:5
+mechanisms="MNAR"; sim_indexes = 1
+normalize=F
 # mechanism="MNAR"; sim_index=1
 for(m in 1:length(mechanisms)){for(s in 1:length(sim_indexes)){
   
-  dir_name = sprintf("Results/%s/miss_%s/sim%d", dataset, case, sim_indexes[s])   # to save interim results
+  dir_name = sprintf("Results/%s/miss_%s/phi%d/sim%d", dataset, case, phi0, sim_indexes[s])   # to save interim results
   fname = sprintf("%s/res_dlglm_%s_%d.RData",dir_name,mechanisms[m],pi*100)
   if(!file.exists(fname)){
     load( sprintf("%s/data_%s_%d.RData", dir_name, mechanisms[m], pi*100) )  # loads "X","Y","mask_x","mask_y","g"
@@ -123,9 +132,10 @@ for(m in 1:length(mechanisms)){for(s in 1:length(sim_indexes)){
     ifelse(!dir.exists(dir_name0), dir.create(dir_name0), F)
     res = tune_hyperparams(dir_name0, X, Y, mask_x, mask_y, g,
                            covars_r_x, covars_r_y, learn_r, Ignorable,
-                           family, link)
+                           family, link, normalize)
     save(res, file=fname)
   } else{
     next
   }
 }}
+

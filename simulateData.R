@@ -10,7 +10,7 @@ simulateData = function(N, P, data_types, family, seed){
   set.seed(seed)
   for(p in 1:P){
     if(data_types[p]=="real"){
-      X[, p] = rnorm(N,mean=4,sd=1)
+      X[, p] = rnorm(N,mean=10,sd=2)
     } else if(data_types[p]=="cat"){
       #### commented out for now; just deal with Gaussian covariates for now...
       # X[, p] = apply(rmultinom(N, 1, rep(1/C,C)), 2, which.max)
@@ -24,7 +24,8 @@ simulateData = function(N, P, data_types, family, seed){
   if(family=="Gaussian"){
     # Simulate y from X --> y = Xb + e
     beta0s = 0
-    betas = rnorm(P)   # effect sizes -1 and 1 test case. Must be of length P
+    # betas = rnorm(P)   # sampled coefs (may be bad. if 0 --> no relationship between X and Y)
+    betas = sample(c(-5,5), P, replace=T)   # -2 or 2 fixed coefs
     # e = rnorm(N,0,1)
     # Y = beta0s + X %*% betas + e
     Y = beta0s + X %*% betas
@@ -44,9 +45,10 @@ simulateData = function(N, P, data_types, family, seed){
   Y = matrix(Y,ncol=1)
   hist(Y)
 
-  
   data = list(X=X, Y=Y)
-  return(list(data=data))
+  params = list(beta0s=beta0s, betas=betas)
+  
+  return(list(data=data, params=params))
 }
 
 simulateMask = function(data, scheme, mechanism, pi, phis, miss_cols, ref_cols, seed){
@@ -121,6 +123,7 @@ simulateMask = function(data, scheme, mechanism, pi, phis, miss_cols, ref_cols, 
     Missing[,miss_cols[j]] = rbinom(n,1,probs)
     
     params[[j]]=list(phi0=alph, phi=phi, miss=miss_cols[j], ref=ref_cols[j], scheme=scheme)
+    print(c(mean(data[Missing[,miss_cols[j]]==0,miss_cols[j]]), mean(data[Missing[,miss_cols[j]]==1,miss_cols[j]])))
   }
   
   return(list(Missing=Missing,
@@ -138,7 +141,7 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
   if(!is.null(data.file.name)){
     # read existing data. list object "data" should be there, with entries "X" and "Y"
     load(data.file.name)
-    dataset = unlist(strsplit(fname,"[.]"))[1]   # remove extension
+    dataset = unlist(strsplit(data.file.name,"[.]"))[1]   # remove extension
   }else{
     P=sim.params$P; N=sim.params$N
     if(all(is.na(sim.params$data_types))){sim.params$data_types = rep("real",sim.params$P)}
@@ -161,7 +164,8 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
   }else{
     mechanism = miss.params$mechanism; pi = miss.params$pi
     set.seed( sim.params$sim_index*9 )
-    phis = c(0, rlnorm(P, log(miss.params$phi0), 0.2)) # default: 0 for intercept, draw values of coefs from log-norm(5, 0.2)
+    # phis = c(0, rlnorm(P, log(miss.params$phi0), 0.2)) # default: 0 for intercept, draw values of coefs from log-norm(5, 0.2)
+    phis = rlnorm(P, log(miss.params$phi0), 0.2) # SHOULDN"T CONTAIN INTERCEPT... intercept found by critical point in E[R] ~ pi
     # if no reference/miss cols provided --> randomly select 50% each
     if(is.null(miss.params$miss_cols) & is.null(miss.params$ref_cols)){
       miss_cols = sample(1:P, floor(P/2), F); ref_cols = c(1:P)[-miss_cols]
@@ -197,7 +201,7 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
     }
   }
   
-  dir_name = sprintf("Results/%s/miss_%s/sim%d", dataset, case, sim.params$sim_index)
+  dir_name = sprintf("Results/%s/miss_%s/phi%d/sim%d", dataset, case, miss.params$phi0, sim.params$sim_index)
   ifelse(!dir.exists(dir_name), dir.create(dir_name,recursive=T), F)
   
   diag_dir_name = sprintf("%s/Diagnostics", dir_name)
@@ -238,15 +242,19 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
     labels = names(sim.params$ratios)
   ))
   
+  sim.data$data = NULL; sim.mask$Missing = NULL # these have already been extracted. don't save to params file
+  
   save(list=c("X","Y","mask_x","mask_y","g"), file = sprintf("%s/data_%s_%d.RData", dir_name, mechanism, pi*100))
-  save(list=c("sim.params","miss.params"), file = sprintf("%s/params_%s_%d.RData", dir_name, mechanism, pi*100))
+  save(list=c("sim.params","miss.params","sim.data","sim.mask"), file = sprintf("%s/params_%s_%d.RData", dir_name, mechanism, pi*100))
 }
 
+phi0=100; pi=0.5
 for(i in 1:5){
   prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2)),
-              miss.params=list(scheme="UV", mechanism="MCAR", pi=0.5, phi0=5, miss_cols=NULL, ref_cols=NULL), case="x")
+              miss.params=list(scheme="UV", mechanism="MCAR", pi=pi, phi0=phi0, miss_cols=NULL, ref_cols=NULL), case="x")
   prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2)),
-              miss.params=list(scheme="UV", mechanism="MAR", pi=0.5, phi0=5, miss_cols=NULL, ref_cols=NULL), case="x")
+              miss.params=list(scheme="UV", mechanism="MAR", pi=pi, phi0=phi0, miss_cols=NULL, ref_cols=NULL), case="x")
   prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2)),
-              miss.params=list(scheme="UV", mechanism="MNAR", pi=0.5, phi0=5, miss_cols=NULL, ref_cols=NULL), case="x")
+              miss.params=list(scheme="UV", mechanism="MNAR", pi=pi, phi0=phi0, miss_cols=NULL, ref_cols=NULL), case="x")
 }
+
