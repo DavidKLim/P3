@@ -15,8 +15,8 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
   Rys = split(data.frame(mask_y), g)
 
   # dim_z --> as.integer() does floor()
-  sigma="elu"; hs=c(64L,128L); bss=c(10000L); lrs=c(0.001,0.01); impute_bs = bss[1]; arch="IWAE"
-  niws=5L; n_epochss=5002L; n_hidden_layers = c(1L, 2L)
+  sigma="elu"; hs=c(64L,128L); bss=c(200L); lrs=c(0.001,0.01); impute_bs = bss[1]; arch="IWAE"
+  niws=20L; n_epochss=5002L; n_hidden_layers = c(1L, 2L)
   
   # misc fixed params:
   add_miss_term = F; draw_miss = T; pre_impute_value = 0; sigma="elu"
@@ -34,6 +34,8 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
   
   LBs_trainVal = matrix(nrow = length(hs)*length(bss)*length(lrs)*length(niws)*length(n_epochss)*length(n_hidden_layers),
                         ncol = 12)
+  colnames(LBs_trainVal) = c("h","bs","lr","niw","epochs","nhls","LB_train","MSE_train_x","MSE_train_y",
+                             "LB_valid","MSE_valid_x","MSE_valid_y")
   index = 1
   
   for(i in 1:length(hs)){for(j in 1:length(bss)){for(k in 1:length(lrs)){
@@ -112,8 +114,12 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
 }
 
 N=1e5; P=8; data_types=rep("real",P); family="Gaussian"; link="identity"
-dataset = sprintf("SIM_N%d_P%d_X%s_Y%s", N, P, data_types[1], family)
+
+mu=10; sd=2; beta=5
 case = "x"; pi=0.5; phi0=100
+prefix = sprintf("Xmean%dsd%d_beta%d_pi%d/",
+                 mu, sd, beta, pi*100)
+dataset = sprintf("SIM_N%d_P%d_X%s_Y%s", N, P, data_types[1], family)
 
 learn_r = T; covars_r_x = rep(1,P); covars_r_y = 1  # include all
 Ignorable=F
@@ -123,7 +129,7 @@ normalize=F
 # mechanism="MNAR"; sim_index=1
 for(m in 1:length(mechanisms)){for(s in 1:length(sim_indexes)){
   
-  dir_name = sprintf("Results/%s/miss_%s/phi%d/sim%d", dataset, case, phi0, sim_indexes[s])   # to save interim results
+  dir_name = sprintf("Results/%s%s/miss_%s/phi%d/sim%d", prefix, dataset, case, phi0, sim_indexes[s])   # to save interim results
   fname = sprintf("%s/res_dlglm_%s_%d.RData",dir_name,mechanisms[m],pi*100)
   if(!file.exists(fname)){
     load( sprintf("%s/data_%s_%d.RData", dir_name, mechanisms[m], pi*100) )  # loads "X","Y","mask_x","mask_y","g"

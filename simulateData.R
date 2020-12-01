@@ -5,27 +5,29 @@ simulateData = function(N, P, data_types, family, seed){
   # if file.name specified, then read in data file --> should have "data"
   # seed determined by sim_index
     
-    
+  mu=10; sd=2
+  
   X = matrix(nrow=N, ncol=P)
   set.seed(seed)
   for(p in 1:P){
     if(data_types[p]=="real"){
-      X[, p] = rnorm(N,mean=10,sd=2)
+      X[, p] = rnorm(N,mean=mu,sd=sd)
     } else if(data_types[p]=="cat"){
       #### commented out for now; just deal with Gaussian covariates for now...
       # X[, p] = apply(rmultinom(N, 1, rep(1/C,C)), 2, which.max)
       ### for categorical data, we have to create dummy variables for categories.... (in simulating Y)
     } else if(data_types[p]=="count"){
-      X[, p] = rpois(N, lambda=8)
+      X[, p] = rpois(N, lambda=mu)
     }
   }
     
+  beta = 50
   # family="Gaussian" --> Gaussian data for Y
   if(family=="Gaussian"){
     # Simulate y from X --> y = Xb + e
     beta0s = 0
     # betas = rnorm(P)   # sampled coefs (may be bad. if 0 --> no relationship between X and Y)
-    betas = sample(c(-5,5), P, replace=T)   # -2 or 2 fixed coefs
+    betas = sample(c(-1*beta,beta), P, replace=T)   # -2 or 2 fixed coefs
     # e = rnorm(N,0,1)
     # Y = beta0s + X %*% betas + e
     Y = beta0s + X %*% betas
@@ -33,20 +35,23 @@ simulateData = function(N, P, data_types, family, seed){
     # beta0s = rnorm(C, 0, 1)
     # betas = cbind(rnorm(C, -1, 1), rnorm(C, 1, 1))   # C x P matrix: each covariates' effects on each class
     beta0s = 0
-    betas = matrix(rnorm(C*P),nrow=C,ncol=P)
+    # betas = matrix(rnorm(C*P),nrow=C,ncol=P)
+    betas = matrix(sample(c(-1*beta,beta), C*P, replace=T),nrow=C,ncol=P)
     prs = exp(matrix(beta0s,nrow=N,ncol=C,byrow=T) + X %*% t(betas))
     prs = prs/rowSums(prs)
     Y = apply(prs, 1, sample, x=c(1:C), size=1, replace=F)
   } else if(family=="Poisson"){
     beta0s = 8
-    betas = rnorm(P)  # effect sizes -1 and 1 test case. Must be of length P
+    # betas = rnorm(P)  # effect sizes -1 and 1 test case. Must be of length P
+    betas = sample(c(-1*beta,beta), P, replace=T)
     Y = round(exp(beta0s + X %*% betas),0)   # log(Y) = eta. Round Y to integer (to simulate count)
   }
   Y = matrix(Y,ncol=1)
   hist(Y)
 
   data = list(X=X, Y=Y)
-  params = list(beta0s=beta0s, betas=betas)
+  params = list(beta0s=beta0s, betas=betas,
+                mu=mu,sd=sd,beta=beta)
   
   return(list(data=data, params=params))
 }
@@ -145,11 +150,15 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
   }else{
     P=sim.params$P; N=sim.params$N
     if(all(is.na(sim.params$data_types))){sim.params$data_types = rep("real",sim.params$P)}
-    dataset = sprintf("SIM_N%d_P%d_X%s_Y%s", sim.params$N, sim.params$P, sim.params$data_types[1], sim.params$family)
+    
     sim.data = simulateData(N=sim.params$N, P=sim.params$P,
                             data_types=sim.params$data_types,
                             family=sim.params$family,
                             seed=sim.params$sim_index*9)
+    params = sim.data$params
+    dataset = sprintf("Xmean%dsd%d_beta%d_pi%d/SIM_N%d_P%d_X%s_Y%s", params$mu, params$sd, params$beta, miss.params$pi*100,
+                      sim.params$N, sim.params$P, sim.params$data_types[1], sim.params$family)
+    
     # family = "Gaussian", "Multinomial", or "Poisson"
     data = sim.data$data
     X=data$X; Y=data$Y
@@ -248,8 +257,8 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
   save(list=c("sim.params","miss.params","sim.data","sim.mask"), file = sprintf("%s/params_%s_%d.RData", dir_name, mechanism, pi*100))
 }
 
-phi0=100; pi=0.5
-for(i in 1:5){
+phi0=100; pi=0.5; sim_index=1:5
+for(i in sim_index){
   prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2)),
               miss.params=list(scheme="UV", mechanism="MCAR", pi=pi, phi0=phi0, miss_cols=NULL, ref_cols=NULL), case="x")
   prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2)),

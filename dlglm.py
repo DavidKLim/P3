@@ -68,11 +68,14 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     return {'miss':np.mean(np.power(xhat-xtrue,2)[mask<0.5]),'obs':np.mean(np.power(xhat-xtrue,2)[mask>0.5])}
     #return {'miss':np.mean(np.power(xhat-xtrue,2)[~mask]),'obs':np.mean(np.power(xhat-xtrue,2)[mask])}
   
-  #xfull = (data - np.mean(data,0))/np.std(data,0)
+  ## STANDARDIZE X AND Y
   xfull = (X - norm_means_x)/norm_sds_x    # need to not do this if data type is not Gaussian
   if family=="Gaussian":
     yfull = (Y - norm_mean_y)/norm_sd_y
   else: yfull = Y.astype("float")
+  
+  ## OMIT STANDARDIZATION
+  # xfull=X; yfull=Y
   
   # Loading and processing data
   n = xfull.shape[0] # number of observations
