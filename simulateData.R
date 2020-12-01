@@ -1,11 +1,12 @@
 # N=100000; P=2; pi=0.5
 
-simulateData = function(N, P, data_types, family, seed){
+simulateData = function(N, P, data_types, family, seed,
+                        mu=0, sd=1, beta=5){
   # if params are specified, then simulate from distributions
   # if file.name specified, then read in data file --> should have "data"
   # seed determined by sim_index
     
-  mu=10; sd=2
+  # mu=0; sd=1; beta=5
   
   X = matrix(nrow=N, ncol=P)
   set.seed(seed)
@@ -21,7 +22,6 @@ simulateData = function(N, P, data_types, family, seed){
     }
   }
     
-  beta = 50
   # family="Gaussian" --> Gaussian data for Y
   if(family=="Gaussian"){
     # Simulate y from X --> y = Xb + e
@@ -138,7 +138,7 @@ simulateMask = function(data, scheme, mechanism, pi, phis, miss_cols, ref_cols, 
 
 # data.file.name=NULL; mask.file.name=NULL; sim.params = list(N=1e5, P=8, data_types=rep("real",P), family="Gaussian", sim_index=1); miss.params = list(scheme="UV", mechanism="MNAR", pi=0.5, phi0=5, miss_cols=NULL, ref_cols=NULL, sim_index=1); case="x"
 prepareData = function(data.file.name = NULL, mask.file.name=NULL,
-                       sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=1, ratios=c(train=.6,valid=.2,test=.2)),
+                       sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=1, ratios=c(train=.6,valid=.2,test=.2), mu=0, sd=1, beta=5),
                        miss.params = list(scheme="UV", mechanism="MNAR", pi=0.5, phi0=5, miss_cols=NULL, ref_cols=NULL),
                        case=c("x","y","xy")){
   print(sim.params)
@@ -154,7 +154,8 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
     sim.data = simulateData(N=sim.params$N, P=sim.params$P,
                             data_types=sim.params$data_types,
                             family=sim.params$family,
-                            seed=sim.params$sim_index*9)
+                            seed=sim.params$sim_index*9,
+                            mu=sim.params$mu, sd=sim.params$sd, beta=sim.params$beta)
     params = sim.data$params
     dataset = sprintf("Xmean%dsd%d_beta%d_pi%d/SIM_N%d_P%d_X%s_Y%s", params$mu, params$sd, params$beta, miss.params$pi*100,
                       sim.params$N, sim.params$P, sim.params$data_types[1], sim.params$family)
@@ -258,12 +259,13 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
 }
 
 phi0=100; pi=0.5; sim_index=1:5
+mu=0; sd=1; beta=5
 for(i in sim_index){
-  prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2)),
+  prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2), mu=mu, sd=sd, beta=beta),
               miss.params=list(scheme="UV", mechanism="MCAR", pi=pi, phi0=phi0, miss_cols=NULL, ref_cols=NULL), case="x")
-  prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2)),
+  prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2), mu=mu, sd=sd, beta=beta),
               miss.params=list(scheme="UV", mechanism="MAR", pi=pi, phi0=phi0, miss_cols=NULL, ref_cols=NULL), case="x")
-  prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2)),
+  prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2), mu=mu, sd=sd, beta=beta),
               miss.params=list(scheme="UV", mechanism="MNAR", pi=pi, phi0=phi0, miss_cols=NULL, ref_cols=NULL), case="x")
 }
 
