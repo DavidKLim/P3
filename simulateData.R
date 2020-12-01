@@ -258,14 +258,13 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
   save(list=c("sim.params","miss.params","sim.data","sim.mask"), file = sprintf("%s/params_%s_%d.RData", dir_name, mechanism, pi*100))
 }
 
-phi0=100; pi=0.5; sim_index=1:5
+phi0=100; pi=0.5; sim_index=1
 mu=0; sd=1; beta=5
+mechanisms="MNAR"
 for(i in sim_index){
-  prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2), mu=mu, sd=sd, beta=beta),
-              miss.params=list(scheme="UV", mechanism="MCAR", pi=pi, phi0=phi0, miss_cols=NULL, ref_cols=NULL), case="x")
-  prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2), mu=mu, sd=sd, beta=beta),
-              miss.params=list(scheme="UV", mechanism="MAR", pi=pi, phi0=phi0, miss_cols=NULL, ref_cols=NULL), case="x")
-  prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2), mu=mu, sd=sd, beta=beta),
-              miss.params=list(scheme="UV", mechanism="MNAR", pi=pi, phi0=phi0, miss_cols=NULL, ref_cols=NULL), case="x")
+  for(m in 1:length(mechanisms)){
+    prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2), mu=mu, sd=sd, beta=beta),
+                miss.params=list(scheme="UV", mechanism=mechanisms[m], pi=pi, phi0=phi0, miss_cols=NULL, ref_cols=NULL), case="x")
+  }
 }
 
