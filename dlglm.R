@@ -16,7 +16,7 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
 
   # dim_z --> as.integer() does floor()
   sigma="elu"; hs=c(64L,128L); bss=c(200L); lrs=c(0.001,0.01); impute_bs = bss[1]; arch="IWAE"
-  niws=5L; n_epochss=2002L; n_hidden_layers = c(1L, 2L)
+  niws=20L; n_epochss=2002L; n_hidden_layers = c(1L, 2L)
   
   # misc fixed params:
   add_miss_term = F; draw_miss = T; pre_impute_value = 0; sigma="elu"
