@@ -1,7 +1,7 @@
 # N=100000; P=2; pi=0.5
 
 simulateData = function(N, P, data_types, family, seed,
-                        mu=0, sd=1, beta=5){
+                        mu=0, sd=1, beta=5, C=NULL){
   # if params are specified, then simulate from distributions
   # if file.name specified, then read in data file --> should have "data"
   # seed determined by sim_index
@@ -10,17 +10,22 @@ simulateData = function(N, P, data_types, family, seed,
   
   X = matrix(nrow=N, ncol=P)
   set.seed(seed)
-  for(p in 1:P){
-    if(data_types[p]=="real"){
-      X[, p] = rnorm(N,mean=mu,sd=sd)
-    } else if(data_types[p]=="cat"){
-      #### commented out for now; just deal with Gaussian covariates for now...
-      # X[, p] = apply(rmultinom(N, 1, rep(1/C,C)), 2, which.max)
-      ### for categorical data, we have to create dummy variables for categories.... (in simulating Y)
-    } else if(data_types[p]=="count"){
-      X[, p] = rpois(N, lambda=mu)
-    }
-  }
+  # for(p in 1:P){
+  #   if(data_types[p]=="real"){
+  #     X[, p] = rnorm(N,mean=mu,sd=sd)
+  #   } else if(data_types[p]=="cat"){
+  #     #### commented out for now; just deal with Gaussian covariates for now...
+  #     # X[, p] = apply(rmultinom(N, 1, rep(1/C,C)), 2, which.max)
+  #     ### for categorical data, we have to create dummy variables for categories.... (in simulating Y)
+  #   } else if(data_types[p]=="count"){
+  #     X[, p] = rpois(N, lambda=mu)
+  #   }
+  # }
+  mu = rep(mu, sum(data_types=="real"))
+  Sigma=diag(sum(data_types=="real"))
+  Sigma[Sigma==0]=0.5
+  library(MASS)
+  X[, data_types=="real"] = mvrnorm(N,mu,Sigma)
     
   # family="Gaussian" --> Gaussian data for Y
   if(family=="Gaussian"){
@@ -138,7 +143,7 @@ simulateMask = function(data, scheme, mechanism, pi, phis, miss_cols, ref_cols, 
 
 # data.file.name=NULL; mask.file.name=NULL; sim.params = list(N=1e5, P=8, data_types=rep("real",P), family="Gaussian", sim_index=1); miss.params = list(scheme="UV", mechanism="MNAR", pi=0.5, phi0=5, miss_cols=NULL, ref_cols=NULL, sim_index=1); case="x"
 prepareData = function(data.file.name = NULL, mask.file.name=NULL,
-                       sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=1, ratios=c(train=.6,valid=.2,test=.2), mu=0, sd=1, beta=5),
+                       sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=1, ratios=c(train=.6,valid=.2,test=.2), mu=0, sd=1, beta=5, C=NULL),
                        miss.params = list(scheme="UV", mechanism="MNAR", pi=0.5, phi0=5, miss_cols=NULL, ref_cols=NULL),
                        case=c("x","y","xy")){
   print(sim.params)
@@ -155,9 +160,10 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
                             data_types=sim.params$data_types,
                             family=sim.params$family,
                             seed=sim.params$sim_index*9,
-                            mu=sim.params$mu, sd=sim.params$sd, beta=sim.params$beta)
+                            mu=sim.params$mu, sd=sim.params$sd,
+                            beta=sim.params$beta, C=sim.params$C)
     params = sim.data$params
-    dataset = sprintf("Xmean%dsd%d_beta%d_pi%d/SIM_N%d_P%d_X%s_Y%s", params$mu, params$sd, params$beta, miss.params$pi*100,
+    dataset = sprintf("Xmean%dsd%d_beta%d_pi%d/SIM_N%d_P%d_X%s_Y%s", params$mu[1], params$sd[1], params$beta, miss.params$pi*100,
                       sim.params$N, sim.params$P, sim.params$data_types[1], sim.params$family)
     
     # family = "Gaussian", "Multinomial", or "Poisson"
@@ -210,8 +216,9 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
       mask_x = mask[,1:P]; mask_y = mask[,(P+1)]
     }
   }
+  data_type_x = sim.params$data_types[1]; data_type_y = if(family=="Gaussian"){"real"}else if(family=="Multinomial"){"cat"}else if(family=="Poisson"){"cts"}
   
-  dir_name = sprintf("Results/%s/miss_%s/phi%d/sim%d", dataset, case, miss.params$phi0, sim.params$sim_index)
+  dir_name = sprintf("Results_X%s_Y%s/%s/miss_%s/phi%d/sim%d", data_type_x, data_type_y, dataset, case, miss.params$phi0, sim.params$sim_index)
   ifelse(!dir.exists(dir_name), dir.create(dir_name,recursive=T), F)
   
   diag_dir_name = sprintf("%s/Diagnostics", dir_name)
@@ -261,10 +268,14 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
 phi0=100; pi=0.5; sim_index=1
 mu=0; sd=1; beta=5
 mechanisms="MNAR"
+case="x"
+
+family="Gaussian"; C=NULL
+# family="Multinomial"; C=3
 for(i in sim_index){
   for(m in 1:length(mechanisms)){
-    prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=i, ratios=c(train=.6,valid=.2,test=.2), mu=mu, sd=sd, beta=beta),
-                miss.params=list(scheme="UV", mechanism=mechanisms[m], pi=pi, phi0=phi0, miss_cols=NULL, ref_cols=NULL), case="x")
+    prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family=family, sim_index=i, ratios=c(train=.6,valid=.2,test=.2), mu=mu, sd=sd, beta=beta, C=C),
+                miss.params=list(scheme="UV", mechanism=mechanisms[m], pi=pi, phi0=phi0, miss_cols=NULL, ref_cols=NULL), case=case)
   }
 }
 

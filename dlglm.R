@@ -9,6 +9,7 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
   source_python("dlglm.py")
   P = ncol(X); N = nrow(X)
   
+  if(family=="Multinomial"){Y=Y-min(Y)}   # set to start from 0, not 1
   Xs = split(data.frame(X), g)        # split by $train, $test, and $valid
   Ys = split(data.frame(Y), g)        # split by $train, $test, and $valid
   Rxs = split(data.frame(mask_x), g)
