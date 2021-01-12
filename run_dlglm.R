@@ -3,8 +3,11 @@ source("dlglm.R")
 N=1e5; P=8; data_types=rep("real",P)
 family="Gaussian"; link="identity"
 # family="Multinomial"; link="mlogit"
-mu=0; sd=1; beta=5
-case = "x"; pi=0.5; phi0=100
+# mu=0; sd=1; beta=5
+# mu=1; sd=2; beta=5
+mu=5; sd=5; beta=5
+# case = "x"; pi=0.5; phi0=100
+case = "x"; pi=0.5; phi0=5
 learn_r = T; covars_r_x = rep(1,P); covars_r_y = 1  # include all
 Ignorable=F; normalize=F
 mechanisms="MNAR"; sim_indexes = 1

@@ -174,8 +174,18 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   else: NN_r=None
   # can initialize NN_ym if missingness detected in y , NN_xm if missingness detected in x
 
-  # Prior p(x): mean and sd for each feature
-  mu_x = torch.zeros(p, requires_grad=True, device="cuda:0"); scale_x = torch.ones(p, requires_grad=True, device="cuda:0")
+  ## Prior p(x): mean and sd for each feature (Uncorrelated covariates)
+  # mu_x = torch.zeros(p, requires_grad=True, device="cuda:0"); scale_x = torch.ones(p, requires_grad=True, device="cuda:0")
+  
+  all_covars=False   ## True: p(x) all covariates in distrib, False: p(xm) covariates (only covars with missingness in them)
+  ## Prior p(x): correlated covariates (unstructured covariance structure)
+  if all_covars:
+    mu_x = torch.zeros(p, requires_grad=True, device="cuda:0"); scale_x = torch.eye(p, requires_grad=True, device="cuda:0")
+  else:
+    # only missing covars
+    mu_x = torch.zeros(p_miss, requires_grad=True, device="cuda:0")
+    scale_x = torch.eye(p_miss, requires_grad=True, device="cuda:0")
+  
   alpha = torch.ones(1, requires_grad=True, device="cuda:0")   # learned directly
 
   def invlink(link="identity"):
@@ -213,7 +223,12 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     tiledmask_y = torch.Tensor.repeat(mask_y,[niw,1]); tiled_tiledmask_y = torch.Tensor.repeat(tiledmask_y,[niw,1])
     if not draw_miss: tiled_iota_yfull = torch.Tensor.repeat(iota_yfull,[niw,1])
     
-    p_x = td.Normal(loc=mu_x, scale=torch.nn.Softplus()(scale_x)+0.001)
+    ## uncorrelated covariates
+    # p_x = td.Normal(loc=mu_x, scale=torch.nn.Softplus()(scale_x)+0.001)
+    
+    ## Correlated covariates (unstructured covariance structure)
+    # p_x = td.multivariate_normal.MultivariateNormal(loc=mu_x,covariance_matrix=torch.nn.Softplus()(scale_x)+0.001)
+    p_x = td.multivariate_normal.MultivariateNormal(loc=mu_x,covariance_matrix=torch.matmul(scale_x, scale_x.t()))  # multiply by transpose -> make it positive definite
 
     params_x = None; xm = iota_x; xm_flat = torch.Tensor.repeat(iota_x,[niw,1])  # if no missing x
     params_y = None; ym = iota_y; ym_flat = torch.Tensor.repeat(iota_y,[niw,1])
@@ -346,9 +361,15 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       else: all_log_pygivenx = pygivenx.log_prob(yincluded)
 
       logpygivenx = all_log_pygivenx.reshape([M*M,batch_size])
-      # log p(x)
-      logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([M*M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
-      ##logpx = torch.sum(p_x.log_prob(xincluded)*(1-tiled_tiledmask_x),axis=1).reshape([M*M,batch_size])     # xincluded: xo and sample of xm (just missing x)
+      ## log p(x): uncorrelated
+      # logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([M*M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+      ## log p(x): correlated (unstructured)
+      if all_covars:
+        logpx = p_x.log_prob(xincluded).reshape([M*M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+      else:
+        # just missing covars
+        logpx = p_x.log_prob(xincluded[:,miss_ids]).reshape([M*M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+
       # log q(xm|xo,r)
       logqxmgivenxor = torch.sum(qxmgivenxor.log_prob(xincluded.reshape([M*M,batch_size,p])).reshape([M*M*batch_size,p])*(1-tiled_tiledmask_x),1).reshape([M*M,batch_size])
       # log q(ym|yo,r,xm,xo)
@@ -370,8 +391,15 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
 
         #print("Diagnostics:"); print(yincluded.shape); print(pygivenx.event_shape); print(pygivenx.batch_shape); print(all_log_pygivenx.shape)
         logpygivenx = all_log_pygivenx.reshape([M,batch_size])
-        # log p(x)
-        logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        
+        ## log p(x): uncorrelated
+        # logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        ## log p(x): correlated (unstructured)
+        if all_covars:
+          logpx = p_x.log_prob(xincluded).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        else:
+          # just missing covars
+          logpx = p_x.log_prob(xincluded[:,miss_ids]).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
       elif not miss_x and miss_y: # case 2
         if not Ignorable:
           all_logprgivenxy = prgivenxy.log_prob(tiledmask_y)
@@ -385,8 +413,14 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         else: all_log_pygivenx = pygivenx.log_prob(yincluded.reshape([-1]))
 
         logpygivenx = all_log_pygivenx.reshape([M,batch_size])
-        # log p(x)
-        logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        ## log p(x): uncorrelated
+        # logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        ## log p(x): correlated (unstructured)
+        if all_covars:
+          logpx = p_x.log_prob(xincluded).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        else:
+          # just missing covars
+          logpx = p_x.log_prob(xincluded[:,miss_ids]).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
       else:     # no missing
         logprgivenxy=0; all_logprgivenxy=0; logqxmgivenxor=0; logqymgivenyor=0
 
@@ -394,9 +428,15 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         else: all_log_pygivenx = pygivenx.log_prob(yincluded.reshape([-1]))
 
         logpygivenx = all_log_pygivenx.reshape([1,batch_size])
-        # log p(x)
-        logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([1,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
-      
+        ## log p(x): uncorrelated
+        # logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([1,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        ## log p(x): correlated (unstructured)
+        if all_covars:
+          logpx = p_x.log_prob(xincluded).reshape([1,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        else:
+          # just missing covars
+          logpx = p_x.log_prob(xincluded[:,miss_ids]).reshape([1,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+
       
       ##logpx = torch.sum(p_x.log_prob(xincluded)*(1-tiledmask_x),axis=1).reshape([M,batch_size])     # xincluded: xo and sample of xm (just missing x)
     
@@ -457,8 +497,15 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       else: all_log_pygivenx = pygivenx.log_prob(yincluded)
 
       logpygivenx = all_log_pygivenx.reshape([M*M,batch_size])
-      # log p(x)
-      logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([M*M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+      ## log p(x): uncorrelated
+      # logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([M*M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+      ## log p(x): correlated (unstructured)
+      if all_covars:
+        logpx = p_x.log_prob(xincluded).reshape([M*M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+      else:
+        # just missing covars
+        logpx = p_x.log_prob(xincluded[:,miss_ids]).reshape([M*M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+
       ##logpx = torch.sum(p_x.log_prob(xincluded)*(1-tiled_tiledmask_x),axis=1).reshape([M*M,batch_size])     # xincluded: xo and sample of xm (just missing x)
       # log q(xm|xo,r)
       logqxmgivenxor = torch.sum(qxmgivenxor.log_prob(xincluded.reshape([M*M,batch_size,p])).reshape([M*M*batch_size,p])*(1-tiled_tiledmask_x),1).reshape([M*M,batch_size])
@@ -481,8 +528,15 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
 
         #print("Diagnostics:"); print(yincluded.shape); print(pygivenx.event_shape); print(pygivenx.batch_shape); print(all_log_pygivenx.shape)
         logpygivenx = all_log_pygivenx.reshape([M,batch_size]) #**** THIS IT THE PROBLEM**** ::: #RuntimeError: shape '[5, 5000]' is invalid for input of size 625000000; bs=5000, M=5. IDK what 625000000 came from
-        # log p(x)
-        logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        ## log p(x): uncorrelated
+        # logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        ## log p(x): correlated (unstructured)
+        if all_covars:
+          logpx = p_x.log_prob(xincluded).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        else:
+          ## just missing covars
+          logpx = p_x.log_prob(xincluded[:,miss_ids]).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+
       elif not miss_x and miss_y: # case 2
         if not Ignorable:
           all_logprgivenxy = prgivenxy.log_prob(tiledmask_y)
@@ -496,8 +550,15 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         else: all_log_pygivenx = pygivenx.log_prob(yincluded.reshape([-1]))
 
         logpygivenx = all_log_pygivenx.reshape([M,batch_size])
-        # log p(x)
-        logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        ## log p(x): uncorrelated
+        # logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        ## log p(x): correlated (unstructured)
+        if all_covars:
+          logpx = p_x.log_prob(xincluded).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        else:
+          ## just missing covars
+          logpx = p_x.log_prob(xincluded[:,miss_ids]).reshape([M,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+
       else:     # no missing
         logprgivenxy=0; all_logprgivenxy=0; logqxmgivenxor=0; logqymgivenyor=0
 
@@ -505,8 +566,14 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         else: all_log_pygivenx = pygivenx.log_prob(yincluded.reshape([-1]))
 
         logpygivenx = all_log_pygivenx.reshape([1,batch_size])
-        # log p(x)
-        logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([1,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        ## log p(x): uncorrelated
+        # logpx = torch.sum(p_x.log_prob(xincluded),axis=1).reshape([1,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        ## log p(x): correlated (unstructured)
+        if all_covars:
+          logpx = p_x.log_prob(xincluded).reshape([1,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
+        else:
+          # just missing covars
+          logpx = p_x.log_prob(xincluded[:,miss_ids]).reshape([1,batch_size])     # xincluded: xo and sample of xm (both observed and missing x)
       
     if miss_x:
       xmgivenxor = td.Independent(td.Normal(loc=params_xm['mean'],scale=params_xm['scale']),1)

@@ -266,7 +266,7 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
 }
 
 phi0=100; pi=0.5; sim_index=1
-mu=0; sd=1; beta=5
+mu=5; sd=5; beta=5
 mechanisms="MNAR"
 case="x"
 
