@@ -164,13 +164,13 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     
     return model
   
-  if miss_x: NN_xm = network_maker(act_fun, n_hidden_layers, 2*p, h1, n_params_xm, False, True).cuda()
+  if miss_x: NN_xm = network_maker(act_fun, n_hidden_layers, 2*p, h1, n_params_xm, True, False).cuda()
   else: NN_xm = None
-  if miss_y: NN_ym = network_maker(act_fun, n_hidden_layers, p+2, h1, n_params_ym, False, True).cuda()
+  if miss_y: NN_ym = network_maker(act_fun, n_hidden_layers, p+2, h1, n_params_ym, True, False).cuda()
   else: NN_ym = None
   NN_y = network_maker(act_fun, 0, p, h2, n_params_y, False, False).cuda()
 
-  if not Ignorable: NN_r = network_maker(act_fun, n_hidden_layers_r, pr, h3, n_params_r, False, True).cuda()
+  if not Ignorable: NN_r = network_maker(act_fun, n_hidden_layers_r, pr, h3, n_params_r, True, False).cuda()
   else: NN_r=None
   # can initialize NN_ym if missingness detected in y , NN_xm if missingness detected in x
 
