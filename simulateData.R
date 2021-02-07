@@ -1,7 +1,7 @@
 # N=100000; P=2; pi=0.5
 
 simulateData = function(N, P, data_types, family, seed,
-                        mu=0, sd=1, beta=5, C=NULL){
+                        mus=NULL, sds=NULL, lambdas=NULL, probs=list(), beta=5, C=NULL){
   # if params are specified, then simulate from distributions
   # if file.name specified, then read in data file --> should have "data"
   # seed determined by sim_index
@@ -21,34 +21,59 @@ simulateData = function(N, P, data_types, family, seed,
   #     X[, p] = rpois(N, lambda=mu)
   #   }
   # }
-  mu = rep(mu, sum(data_types=="real"))
-  Sigma=diag(sum(data_types=="real"))
-  Sigma[Sigma==0]=0.5
-  library(MASS)
-  X[, data_types=="real"] = mvrnorm(N,mu,Sigma)
-    
+  
+  P_real=sum(data_types=="real"); P_cat=sum(data_types=="cat"); P_count=sum(data_types=="count")
+  ## Using SimMultiCorrData
+  library(SimMultiCorrData)
+  rho = diag(8)
+  rho[rho==0] = 0.5
+  x=SimMultiCorrData::rcorrvar(method="Polynomial",n=N,
+                               k_cont=P_real, k_cat=P_cat, k_pois=P_count,
+                               #### continuous ####
+                               means=mus, vars=sds, skews=rep(0, P_real),
+                               skurts=rep(0, P_real), fifths=rep(0, P_real), sixths=rep(0, P_real),
+                               #### count ####
+                               lam = exp( lambdas ),   # exp mean
+                               # pois_eps = rep(0.0001, P_count),
+                               #### cat ####
+                               marginal=lapply(probs,function(y)cumsum(y)[-length(y)]),
+                               support=list(1:C, 1:C),
+                               rho=rho,
+                               seed=999)
+  
+  X = as.matrix( cbind(x$continuous_variables, x$ordinal_variables, x$Poisson_variables) )
+  
+  betas_real = sample(c(-1*beta, beta), P_real, replace=T)
+  # (most proper:  for cat vars: diff effect per level. not doing this right now --> same effect from 1 --> 2, 2 --> 3, etc.)
+  betas_cat = sample(c(-2*beta, 2*beta), P_cat, replace=T)       # mean(cts) = 5, mean(cat) = 2, mean(count) = exp(8) ~ 2981
+  betas_count = sample(c(-beta/600, beta/600), P_count, replace=T)      # effect is twice the magnitude of the effect of continuous values?
+  
+  betas=c(betas_real, betas_cat, betas_count)
+  # mu=mu,sd=sd
+  
+  ## For just one type of covariates
+  # mu = rep(mu, sum(data_types=="real"))
+  # Sigma=diag(sum(data_types=="real"))
+  # Sigma[Sigma==0]=0.5
+  # library(MASS)
+  # X[, data_types=="real"] = mvrnorm(N,mu,Sigma)
+
   # family="Gaussian" --> Gaussian data for Y
   if(family=="Gaussian"){
     # Simulate y from X --> y = Xb + e
     beta0s = 0
-    # betas = rnorm(P)   # sampled coefs (may be bad. if 0 --> no relationship between X and Y)
-    betas = sample(c(-1*beta,beta), P, replace=T)   # -2 or 2 fixed coefs
-    # e = rnorm(N,0,1)
-    # Y = beta0s + X %*% betas + e
+    # betas = sample(c(-1*beta,beta), P, replace=T)   # defined together in mixed data types
+
     Y = beta0s + X %*% betas
   } else if(family=="Multinomial"){
-    # beta0s = rnorm(C, 0, 1)
-    # betas = cbind(rnorm(C, -1, 1), rnorm(C, 1, 1))   # C x P matrix: each covariates' effects on each class
     beta0s = 0
-    # betas = matrix(rnorm(C*P),nrow=C,ncol=P)
-    betas = matrix(sample(c(-1*beta,beta), C*P, replace=T),nrow=C,ncol=P)
+    # betas = matrix(sample(c(-1*beta,beta), C*P, replace=T),nrow=C,ncol=P)    # defined together in mixed data types
     prs = exp(matrix(beta0s,nrow=N,ncol=C,byrow=T) + X %*% t(betas))
     prs = prs/rowSums(prs)
     Y = apply(prs, 1, sample, x=c(1:C), size=1, replace=F)
   } else if(family=="Poisson"){
     beta0s = 8
-    # betas = rnorm(P)  # effect sizes -1 and 1 test case. Must be of length P
-    betas = sample(c(-1*beta,beta), P, replace=T)
+    # betas = sample(c(-1*beta,beta), P, replace=T)    # defined together in mixed data types
     Y = round(exp(beta0s + X %*% betas),0)   # log(Y) = eta. Round Y to integer (to simulate count)
   }
   Y = matrix(Y,ncol=1)
@@ -56,7 +81,7 @@ simulateData = function(N, P, data_types, family, seed,
 
   data = list(X=X, Y=Y)
   params = list(beta0s=beta0s, betas=betas,
-                mu=mu,sd=sd,beta=beta)
+                mus=mus,sds=sds, lambdas=lambdas, probs=probs, beta=beta)
   
   return(list(data=data, params=params))
 }
@@ -143,7 +168,8 @@ simulateMask = function(data, scheme, mechanism, pi, phis, miss_cols, ref_cols, 
 
 # data.file.name=NULL; mask.file.name=NULL; sim.params = list(N=1e5, P=8, data_types=rep("real",P), family="Gaussian", sim_index=1); miss.params = list(scheme="UV", mechanism="MNAR", pi=0.5, phi0=5, miss_cols=NULL, ref_cols=NULL, sim_index=1); case="x"
 prepareData = function(data.file.name = NULL, mask.file.name=NULL,
-                       sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=1, ratios=c(train=.6,valid=.2,test=.2), mu=0, sd=1, beta=5, C=NULL),
+                       sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=1, ratios=c(train=.6,valid=.2,test=.2),
+                                         mus=NULL, sds=NULL, lambdas=NULL, probs=list(), beta=5, C=NULL),
                        miss.params = list(scheme="UV", mechanism="MNAR", pi=0.5, phi0=5, miss_cols=NULL, ref_cols=NULL),
                        case=c("x","y","xy")){
   print(sim.params)
@@ -156,15 +182,25 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
     P=sim.params$P; N=sim.params$N
     if(all(is.na(sim.params$data_types))){sim.params$data_types = rep("real",sim.params$P)}
     
+    # N=sim.params$N; P=sim.params$P
+    # data_types=sim.params$data_types
+    # family=sim.params$family
+    # seed=sim.params$sim_index*9
+    # mus=sim.params$mus; sds=sim.params$sds
+    # lambdas=sim.params$lambdas; probs=sim.params$probs
+    # beta=sim.params$beta; C=sim.params$C
+    
     sim.data = simulateData(N=sim.params$N, P=sim.params$P,
                             data_types=sim.params$data_types,
                             family=sim.params$family,
                             seed=sim.params$sim_index*9,
-                            mu=sim.params$mu, sd=sim.params$sd,
+                            mus=sim.params$mus, sds=sim.params$sds,
+                            lambdas=sim.params$lambdas, probs=sim.params$probs,
                             beta=sim.params$beta, C=sim.params$C)
     params = sim.data$params
-    dataset = sprintf("Xmean%dsd%d_beta%d_pi%d/SIM_N%d_P%d_X%s_Y%s", params$mu[1], params$sd[1], params$beta, miss.params$pi*100,
-                      sim.params$N, sim.params$P, sim.params$data_types[1], sim.params$family)
+    dataset = sprintf("Xr%dct%dcat%d_beta%d_pi%d/SIM_N%d_P%d",sum(sim.params$data_types=="real"),
+                      sum(sim.params$data_types=="count"),sum(sim.params$data_types=="cat"), params$beta, miss.params$pi*100,
+                      sim.params$N, sim.params$P)
     
     # family = "Gaussian", "Multinomial", or "Poisson"
     data = sim.data$data
@@ -216,7 +252,8 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
       mask_x = mask[,1:P]; mask_y = mask[,(P+1)]
     }
   }
-  data_type_x = sim.params$data_types[1]; data_type_y = if(family=="Gaussian"){"real"}else if(family=="Multinomial"){"cat"}else if(family=="Poisson"){"cts"}
+  data_type_x = if(all(sim.params$data_types==sim.params$data_types[1])){ sim.params$data_types[1] } else{ "mixed" }
+  data_type_y = if(family=="Gaussian"){"real"}else if(family=="Multinomial"){"cat"}else if(family=="Poisson"){"cts"}
   
   dir_name = sprintf("Results_X%s_Y%s/%s/miss_%s/phi%d/sim%d", data_type_x, data_type_y, dataset, case, miss.params$phi0, sim.params$sim_index)
   ifelse(!dir.exists(dir_name), dir.create(dir_name,recursive=T), F)
@@ -266,15 +303,19 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
 }
 
 phi0=100; pi=0.5; sim_index=1
-mu=5; sd=5; beta=5
+mus=5; sds=5; beta=5
 mechanisms="MNAR"
 case="x"
 
-family="Gaussian"; C=NULL
+family="Gaussian"; C=3       ## 3 classes for cat vars
+N=1e5; P=8
+# data_types = rep("real",P); mus=rep(5,P); sds=rep(5,P); lambds=NULL; probs=list()
+data_types = c( rep("real",3), rep("count",3), rep("cat",2) ); mus=rep(5,P_real); sds=rep(5,P_real); lambdas=rep(8,P_count); probs=list( rep(1/C,C), rep(1/C,C) ) 
 # family="Multinomial"; C=3
 for(i in sim_index){
   for(m in 1:length(mechanisms)){
-    prepareData(sim.params = list(N=1e5, P=8, data_types=NA, family=family, sim_index=i, ratios=c(train=.6,valid=.2,test=.2), mu=mu, sd=sd, beta=beta, C=C),
+    prepareData(sim.params = list(N=N, P=P, data_types=data_types, family=family, sim_index=i, ratios=c(train=.6,valid=.2,test=.2),
+                                  mus=mus, sds=sds, lambdas=lambdas, probs=probs, beta=beta, C=C),
                 miss.params=list(scheme="UV", mechanism=mechanisms[m], pi=pi, phi0=phi0, miss_cols=NULL, ref_cols=NULL), case=case)
   }
 }

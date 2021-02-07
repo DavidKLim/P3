@@ -10,7 +10,7 @@ processResults = function(prefix="",data.file.name = NULL, mask.file.name=NULL,
   N=sim.params$N; P=sim.params$P; data_types=sim.params$data_types; family=sim.params$family
   link=if(family=="Gaussian"){"identity"}else if(family=="Multinomial"){"mlogit"}else if(family=="Poisson"){"log"}
   if(is.null(data.file.name)){
-    dataset = sprintf("SIM_N%d_P%d_X%s_Y%s", N, P, data_types[1], family)
+    dataset = sprintf("SIM_N%d_P%d", N, P)
   } else{dataset = unlist(strsplit(data.file.name,"[.]"))[1]}
   pi = miss.params$pi
   mechanism=miss.params$mechanism
@@ -51,6 +51,11 @@ processResults = function(prefix="",data.file.name = NULL, mask.file.name=NULL,
   
   str(res)
   
+  # working with weights
+  ## after first iteration: should ahve w0/w saved properly
+  w0=res$w0 ## w0 should be nothing --> removed intercept to prevent multicollinearity
+  w=res$w
+  
   niws=1
   if(grepl("x",case)){
     # NRMSE(X, res$xhat)
@@ -86,6 +91,7 @@ processResults = function(prefix="",data.file.name = NULL, mask.file.name=NULL,
   #########################################
   
   ## prediction of Y in test set: E[Y|X] - Ytrue
+  ## WITH MISSINGNESS IN TEST SET
   if(normalize){
     mu_y = colMeans(matrix(res$all_params$y$mean*norm_sd_y + norm_mean_y,nrow=niws))  # average over the multiple samples of Xm --> Y'1
   }else{
@@ -94,12 +100,17 @@ processResults = function(prefix="",data.file.name = NULL, mask.file.name=NULL,
       ## average probs, then choose max prob class
       # probs_y = apply(res$all_params$y$probs, 2, function(x){rowMeans(matrix(x,ncol=niws))})
       # mu_y = apply(probs_y,1,which.max)
-      
+
       ## choose max classes first then take consensus
       cls_y = apply(res$all_params$y$probs, 1,which.max)
       mu_y = apply(matrix(cls_y, ncol=niws), 1, function(x){ as.numeric(names(which.max(table(x)))) })
     }
   }
+  
+  ## WITHOUT MISSINGNESS IN TEST SET
+  # mu_y = as.matrix(Xs$test) %*% as.matrix(as.numeric(w),ncol=1)
+  
+  
   if(family%in% c("Gaussian","Poisson")){
     boxplot(as.numeric(unlist(Ys$test - mu_y)), main="Difference between test Y and learned E[Y|X]",outline=F)  # prediction of Y (mu_y as)
   } else if(family=="Multinomial"){
@@ -131,22 +142,11 @@ processResults = function(prefix="",data.file.name = NULL, mask.file.name=NULL,
     boxplot(true_mu_y - mu_y, main = "Difference between true E[Y|X] and learned E[Y|X]",outline=F)  # prediction of Y (mu_y as)
   }
   
-  # working with weights
-  ## after first iteration: should ahve w0/w saved properly
-  w0=res$w0
-  w=res$w
   
-  ## first iteration:
-  # library(reticulate)
-  # torch = import("torch")
-  # saved_model = torch$load(sprintf("%s/%s_%d/temp_opt_train_saved_model.pth",dir_name,mechanism,pi*100))
-  # # py_run_string("w0 = r.saved_model['NN_y'][0].bias.cpu().data.numpy()")
-  # py_run_string("w = r.saved_model['NN_y'][0].weight.cpu().data.numpy()")
-  # # w0=py$w0
-  # w=py$w
-  # print(paste("true intercept:",beta0s, ", fitted intercept:", w0))
   print("true, fitted coefs:")
   print(cbind(c(betas),c(w)))
+  
+  
   # w0 = saved_model$NN_y[0]$bias
   # w = saved_model$NN_y[0]$weight
   
@@ -175,8 +175,14 @@ processResults = function(prefix="",data.file.name = NULL, mask.file.name=NULL,
     fit_zero = multinom(Y_zero ~ 0 + ., data=d_zero)
   }
   
-  yhat_mean_pred = predict(fit_mean, newdata=cbind(Xs_mean$test,Ys_mean$test,row.names = NULL))
-  yhat_zero_pred = predict(fit_zero, newdata=cbind(Xs_zero$test,Ys_zero$test,row.names = NULL))
+  
+  ## WITH MISSINGNESS IN TEST SET
+  # yhat_mean_pred = predict(fit_mean, newdata=cbind(Xs_mean$test,Ys_mean$test,row.names = NULL))
+  # yhat_zero_pred = predict(fit_zero, newdata=cbind(Xs_zero$test,Ys_zero$test,row.names = NULL))
+  
+  ## WITHOUT MISSINGNESS IN TEST SET
+  yhat_mean_pred = predict(fit_mean, newdata=cbind(Xs$test,Ys$test,row.names = NULL))
+  yhat_zero_pred = predict(fit_zero, newdata=cbind(Xs$test,Ys$test,row.names = NULL))
   
   
   # comparing all
