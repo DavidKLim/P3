@@ -10,10 +10,12 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
   P = ncol(X); N = nrow(X)
   
   # Transform count data (log) and cat data (subtract by min)
+  data_types_x_0 = data_types_x
   X[,data_types_x=="count"] = log(X[,data_types_x=="count"]+0.001)
   if(sum(data_types_x=="cat") == 0){
     X_aug = X
   } else{
+    # reorder to real&count covariates first, then augment cat dummy vars
     X_aug = X[,data_types_x %in% c("real","count")]
     mask_x_aug = mask_x[,data_types_x %in% c("real","count")]
     covars_r_x_aug = covars_r_x[data_types_x %in% c("real","count")]
@@ -55,7 +57,7 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
   # dim_z --> as.integer() does floor()
   sigma="elu"; hs=c(64L,128L); bss=c(200L); lrs=c(0.001,0.01); impute_bs = bss[1]; arch="IWAE"
   # sigma="elu"; hs=c(64L,128L); bss=c(200L); lrs=c(0.01); impute_bs = bss[1]; arch="IWAE"   # TEST. COMMENT OUT AND REPLACE W ABOVE LATER
-  niws=5L; n_epochss=1002L; n_hidden_layers = c(1L, 2L)
+  niws=5L; n_epochss=2L; n_hidden_layers = c(1L, 2L)
   
   dim_zs = c(as.integer(floor(ncol(X)/2)), as.integer(floor(ncol(X)/4)))
   
@@ -99,7 +101,7 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
       res_train = dlglm(np$array(Xs$train), np$array(Rxs$train), np$array(Ys$train), np$array(Rys$train),
                         np$array(covars_r_x), np$array(covars_r_y),
                         np$array(norm_means_x), np$array(norm_sds_x), np$array(norm_mean_y), np$array(norm_sd_y),
-                        learn_r, np$array(data_types_x), np$array(Cs), Ignorable, family, link,
+                        learn_r, np$array(data_types_x), np$array(data_types_x_0), np$array(Cs), Ignorable, family, link,
                         impute_bs, arch, add_miss_term, draw_miss, 
                         pre_impute_value, n_hidden_layers[nn], n_hidden_layers_r, 
                         hs[i], hs[i], h3, phi0, phi, 
@@ -108,7 +110,7 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
       res_valid = dlglm(np$array(Xs$valid), np$array(Rxs$valid), np$array(Ys$valid), np$array(Rys$valid),
                         np$array(covars_r_x), np$array(covars_r_y),
                         np$array(norm_means_x), np$array(norm_sds_x), np$array(norm_mean_y), np$array(norm_sd_y),
-                        learn_r, np$array(data_types_x), np$array(Cs), Ignorable, family, link,
+                        learn_r, np$array(data_types_x), np$array(data_types_x_0), np$array(Cs), Ignorable, family, link,
                         impute_bs, arch, add_miss_term, draw_miss, 
                         pre_impute_value, n_hidden_layers[nn], n_hidden_layers_r, 
                         hs[i], hs[i], h3, phi0, phi, 
@@ -153,7 +155,7 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
   res_test = dlglm(np$array(Xs$test), np$array(Rxs$test), np$array(Ys$test), np$array(Rys$test),
                    np$array(covars_r_x), np$array(covars_r_y),
                    np$array(norm_means_x), np$array(norm_sds_x), np$array(norm_mean_y), np$array(norm_sd_y),
-                   learn_r, np$array(data_types_x), np$array(Cs), Ignorable, family, link,
+                   learn_r, np$array(data_types_x), np$array(data_types_x_0), np$array(Cs), Ignorable, family, link,
                    impute_bs, arch, add_miss_term, draw_miss, 
                    train_params$pre_impute_value, train_params$n_hidden_layers, train_params$n_hidden_layers_r, 
                    train_params$h1, train_params$h2, train_params$h3, phi0, phi, 
