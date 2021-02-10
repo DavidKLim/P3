@@ -1,4 +1,4 @@
-def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean_y, norm_sd_y, learn_r, data_types_x, Cs, Ignorable=False, family="Gaussian", link="identity", impute_bs=None,arch="IWAE",add_miss_term=False,draw_miss=True,pre_impute_value=0,n_hidden_layers=2,n_hidden_layers_r=0,h1=8,h2=8,h3=0,phi0=None,phi=None,train=1,saved_model=None,sigma="elu",bs = 64,n_epochs = 2002,lr=0.001,L=20,M=20,dim_z=5,trace=False):
+def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean_y, norm_sd_y, learn_r, data_types_x, data_types_x_0, Cs, Ignorable=False, family="Gaussian", link="identity", impute_bs=None,arch="IWAE",add_miss_term=False,draw_miss=True,pre_impute_value=0,n_hidden_layers=2,n_hidden_layers_r=0,h1=8,h2=8,h3=0,phi0=None,phi=None,train=1,saved_model=None,sigma="elu",bs = 64,n_epochs = 2002,lr=0.001,L=20,M=20,dim_z=5,trace=False):
   #family="Gaussian"; link="identity"
   #family="Multinomial"; link="mlogit"
   #family="Poisson"; link="log"
@@ -40,7 +40,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
   
   temp = torch.ones([1], dtype=torch.float64, device='cuda:0'); temp_min=torch.tensor(0.5,device="cuda:0",dtype=torch.float64)
-  ANNEAL_RATE = torch.tensor(0.00003,device="cuda:0",dtype=torch.float64)  # https://github.com/vithursant/VAE-Gumbel-Softmax
+  # ANNEAL_RATE = torch.tensor(0.00003,device="cuda:0",dtype=torch.float64)  # https://github.com/vithursant/VAE-Gumbel-Softmax --> hits 0.5 by epoch 23K... (too much)
+  ANNEAL_RATE = torch.tensor(0.001,device="cuda:0",dtype=torch.float64)  # faster anneal rate --> should hit 0.5 by about epoch 600
   
   if np.all(Rx==1) and np.all(Ry==1):
     Ignorable=True
@@ -1037,6 +1038,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   if train==1:
     # Training+Imputing
     for ep in range(1,n_epochs):
+      print("temp: " + str(temp))
       # t = torch.cuda.get_device_properties(0).total_memory
       # r = torch.cuda.memory_reserved(0) 
       # a = torch.cuda.memory_allocated(0)
@@ -1084,8 +1086,11 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         #mu_x.zero_grad(); scale_x.zero_grad()
 
         loss_fit = compute_loss(iota_xfull=b_xfull, iota_yfull=b_yfull, iota_x = b_x, iota_y = b_y, mask_x = b_mask_x, mask_y = b_mask_y, covar_miss = b_covar, temp=temp)
-        # inputs: iota_xfull,iota_x,iota_y,mask,covar_miss,temp
-        
+        ## inputs: iota_xfull,iota_x,iota_y,mask,covar_miss,temp
+        ######################################################################################################
+        ##################### need to output parameters of each distribution, batched ########################
+        ##################### un-comment out "all_params". NEED all_params$y for prediction ##################
+        ######################################################################################################
         
         loss = loss_fit['neg_bound']
         batches_loss = np.append(batches_loss, loss.cpu().data.numpy())
@@ -1477,7 +1482,44 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       print('Observed MSE y:  %g' %err_y['obs'])   # these aren't reconstructed/imputed
       print('Missing MSE y:  %g' %err_y['miss'])
       print('-----')
-      
+    
+    # revert cat vars back to the way they were in xhat, xfull, and mask_x
+    ### REVERT data_types_x = c(r, r, r, count, count, count, cat*Cs[0], cat*Cs[1])
+    ### USE data_types_x_0: original data_types_x = c(r, r, r, cat, cat, count, count, count)
+    
+    #xhat
+    #Cs
+    xhat0 = np.empty([xhat.shape[0], len(data_types_x_0)])
+    mask_x0 = np.empty([mask_x.shape[0], len(data_types_x_0)])
+    i_real=0; i_count=0; i_cat=0; C0=0
+    for i in range(0,len(data_types_x_0)):
+      if data_types_x_0[i]=="real":
+        xhat0[:,i] = xhat[:,np.where(ids_real)[0][i_real]]
+        mask_x0[:,i] = mask_x[:,np.where(ids_real)[0][i_real]]
+        i_real = i_real+1
+      elif data_types_x_0[i]=="count":
+        xhat0[:,i] = xhat[:,np.where(ids_count)[0][i_count]]
+        mask_x0[:,i] = mask_x[:,np.where(ids_count)[0][i_count]]
+        i_count=i_count+1
+      elif data_types_x_0[i]=="cat":
+        # print(int(C0*i_cat))
+        # print(int(C0*i_cat+Cs[i_cat]))
+        idd = np.where(ids_cat)[0][int(C0*i_cat):int(C0*i_cat+Cs[i_cat])]   # should give indices for dummy vars pertaining to respective cat. var
+        # print(idd)
+        xhat0[:,i] = np.argmax(xhat[:,idd], axis=1) + 1      # above line
+        # print(xhat0[0:3,i])
+        # print(xhat[0:3,idd])
+        mask_x0[:,i] = mask_x[:,idd[0]]   # can be max or min or anything --> should still be the same value: 0 or 1
+        # print(mask_x0[0:3,i])
+        # print(mask_x[0:3,idd])
+        C0=Cs[i_cat]
+        i_cat = i_cat+1
+    # raise Exception("TEST")
+    
+    xhat=xhat0
+    mask_x=mask_x0
+    data_types_x=data_types_x_0
+    
     # mse_test={'miss_x':err_x['miss'],'obs_x':err_x['obs'], 'miss_y':err_y['miss'],'obs_y':err_y['obs']}
     # if (learn_r): saved_model={'NN_xm': NN_xm, 'NN_ym': NN_ym, 'NN_y': NN_y, 'NN_r': NN_r, 'mu_x':mu_x, 'scale_x':scale_x}
     # else: saved_model={'NN_xm': NN_xm, 'NN_ym':NN_ym, 'NN_y': NN_y, 'mu_x':mu_x, 'scale_x':scale_x}
