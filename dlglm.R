@@ -57,7 +57,7 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
   # dim_z --> as.integer() does floor()
   sigma="elu"; hs=c(64L,128L); bss=c(200L); lrs=c(0.001,0.01); impute_bs = bss[1]; arch="IWAE"
   # sigma="elu"; hs=c(64L,128L); bss=c(200L); lrs=c(0.01); impute_bs = bss[1]; arch="IWAE"   # TEST. COMMENT OUT AND REPLACE W ABOVE LATER
-  niws=5L; n_epochss=2L; n_hidden_layers = c(1L, 2L)
+  niws=5L; n_epochss=2002L; n_hidden_layers = c(1L, 2L)
   
   dim_zs = c(as.integer(floor(ncol(X)/2)), as.integer(floor(ncol(X)/4)))
   
