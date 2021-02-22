@@ -41,8 +41,9 @@ simulateData = function(N, P, data_types, family, seed,
                                rho=rho,
                                seed=999)
   
-  X = as.matrix( cbind(x$continuous_variables, x$ordinal_variables, x$Poisson_variables) )
-  
+  X = list( x$continuous_variables, x$ordinal_variables, x$Poisson_variables )
+  X <- matrix(unlist(X), ncol = P, byrow = F)
+
   betas_real = sample(c(-1*beta, beta), P_real, replace=T)
   # (most proper:  for cat vars: diff effect per level. not doing this right now --> same effect from 1 --> 2, 2 --> 3, etc.)
   betas_cat = sample(c(-2*beta, 2*beta), P_cat, replace=T)       # mean(cts) = 5, mean(cat) = 2, mean(count) = exp(8) ~ 2981
@@ -310,7 +311,12 @@ case="x"
 family="Gaussian"; C=3       ## 3 classes for cat vars
 N=1e5; P=8
 # data_types = rep("real",P); mus=rep(5,P); sds=rep(5,P); lambds=NULL; probs=list()
-data_types = c( rep("real",3), rep("count",3), rep("cat",2) ); mus=rep(5,P_real); sds=rep(5,P_real); lambdas=rep(8,P_count); probs=list( rep(1/C,C), rep(1/C,C) ) 
+# P_real=8; P_count=0; P_cat=0
+# P_real=3; P_count=3; P_cat=2
+P_real=4; P_count=4; P_cat=0
+
+data_types = c( rep("real",P_real), rep("count",P_count), rep("cat",P_cat) )
+mus=rep(5,P_real); sds=rep(5,P_real); lambdas=rep(8,P_count); probs=list( rep(1/C,C), rep(1/C,C) ) 
 # family="Multinomial"; C=3
 for(i in sim_index){
   for(m in 1:length(mechanisms)){
