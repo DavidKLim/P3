@@ -14,6 +14,8 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
   X[,data_types_x=="count"] = log(X[,data_types_x=="count"]+0.001)
   if(sum(data_types_x=="cat") == 0){
     X_aug = X
+    mask_x_aug = mask_x
+    Cs = np$empty(shape=c(0L,0L))
   } else{
     # reorder to real&count covariates first, then augment cat dummy vars
     X_aug = X[,data_types_x %in% c("real","count")]
@@ -55,9 +57,10 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
   Rys = split(data.frame(mask_y), g)
   
   # dim_z --> as.integer() does floor()
-  sigma="elu"; hs=c(64L,128L); bss=c(200L); lrs=c(0.001,0.01); impute_bs = bss[1]; arch="IWAE"
-  # sigma="elu"; hs=c(64L,128L); bss=c(200L); lrs=c(0.01); impute_bs = bss[1]; arch="IWAE"   # TEST. COMMENT OUT AND REPLACE W ABOVE LATER
-  niws=5L; n_epochss=2002L; n_hidden_layers = c(1L, 2L)
+  sigma="elu"; hs=c(64L,128L); bss=c(200L); lrs=c(0.01,0.001); impute_bs = bss[1]; arch="IWAE"
+  # sigma="elu"; hs=c(64L,128L); bss=c(1000L); lrs=c(0.01); impute_bs = bss[1]; arch="IWAE"   # TEST. COMMENT OUT AND REPLACE W ABOVE LATER
+  niws=5L; n_epochss=2002L; n_hidden_layers = c(2L, 1L)
+  # niws=5L; n_epochss=2002L; n_hidden_layers = c(5L)
   
   dim_zs = c(as.integer(floor(ncol(X)/2)), as.integer(floor(ncol(X)/4)))
   
@@ -68,8 +71,15 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
   
   if(normalize){
     norm_means_x=colMeans(Xs$train, na.rm=T); norm_sds_x=apply(Xs$train,2,function(y) sd(y,na.rm=T))
-    norm_mean_y=colMeans(Ys$train, na.rm=T); norm_sd_y=apply(Ys$train,2,function(y) sd(y,na.rm=T))
+    norm_mean_y=0; norm_sd_y=1
+    # norm_means_x[data_types_x=="cat"] = 0; norm_sds_x[data_types_x=="cat"] = 1
+    # if(family=="Multinomial"){
+    #   norm_mean_y=0; norm_sd_y=1
+    # } else{
+    #   norm_mean_y=colMeans(Ys$train, na.rm=T); norm_sd_y=apply(Ys$train,2,function(y) sd(y,na.rm=T))
+    # }
     dir_name = sprintf("%s/with_normalization",dir_name)
+    ifelse(!dir.exists(dir_name),dir.create(dir_name),F)
   }else{
     P_aug = ncol(Xs$train)
     norm_means_x = rep(0, P_aug); norm_sds_x = rep(1, P_aug)
