@@ -37,7 +37,7 @@ simulateData = function(N, P, data_types, family, seed,
                                # pois_eps = rep(0.0001, P_count),
                                #### cat ####
                                marginal=lapply(probs,function(y)cumsum(y)[-length(y)]),
-                               support=list(1:C, 1:C),
+                               support=lapply(probs,function(y)c(1:length(y))),
                                rho=rho,
                                seed=999)
   
@@ -47,7 +47,9 @@ simulateData = function(N, P, data_types, family, seed,
   betas_real = sample(c(-1*beta, beta), P_real, replace=T)
   # (most proper:  for cat vars: diff effect per level. not doing this right now --> same effect from 1 --> 2, 2 --> 3, etc.)
   betas_cat = sample(c(-2*beta, 2*beta), P_cat, replace=T)       # mean(cts) = 5, mean(cat) = 2, mean(count) = exp(8) ~ 2981
-  betas_count = sample(c(-beta/600, beta/600), P_count, replace=T)      # effect is twice the magnitude of the effect of continuous values?
+  # betas_count = sample(c(-beta/600, beta/600), P_count, replace=T)      # effect is twice the magnitude of the effect of continuous values?
+  # betas_cat = sample(c(-1*beta, beta), P_cat, replace=T)       # mean(cts) = 5, mean(cat) = 2, mean(count) = exp(8) ~ 2981
+  betas_count = sample(c(-1*beta, beta), P_count, replace=T)      # effect is twice the magnitude of the effect of continuous values?
   
   betas=c(betas_real, betas_cat, betas_count)
   # mu=mu,sd=sd
@@ -58,7 +60,9 @@ simulateData = function(N, P, data_types, family, seed,
   # Sigma[Sigma==0]=0.5
   # library(MASS)
   # X[, data_types=="real"] = mvrnorm(N,mu,Sigma)
-
+  
+  # X[,data_types=="count"] = log(X[,data_types=="count"])   # use log(X) for count as covars of Y
+  
   # family="Gaussian" --> Gaussian data for Y
   if(family=="Gaussian"){
     # Simulate y from X --> y = Xb + e
@@ -79,6 +83,8 @@ simulateData = function(N, P, data_types, family, seed,
   }
   Y = matrix(Y,ncol=1)
   hist(Y)
+  
+  # X[,data_types=="count"] = exp(X[,data_types=="count"])    # undo log transf of X
 
   data = list(X=X, Y=Y)
   params = list(beta0s=beta0s, betas=betas,
@@ -304,7 +310,8 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
 }
 
 phi0=100; pi=0.5; sim_index=1
-mus=5; sds=5; beta=5
+# mus=5; sds=5; beta=5
+mus=5; sds=1; beta=5
 mechanisms="MNAR"
 case="x"
 
@@ -313,10 +320,15 @@ N=1e5; P=8
 # data_types = rep("real",P); mus=rep(5,P); sds=rep(5,P); lambds=NULL; probs=list()
 # P_real=8; P_count=0; P_cat=0
 # P_real=3; P_count=3; P_cat=2
-P_real=4; P_count=4; P_cat=0
+# P_real=4; P_count=4; P_cat=0  # need to code in sims for P_pos
+P_real=4; P_count=0; P_cat=4
 
 data_types = c( rep("real",P_real), rep("count",P_count), rep("cat",P_cat) )
-mus=rep(5,P_real); sds=rep(5,P_real); lambdas=rep(8,P_count); probs=list( rep(1/C,C), rep(1/C,C) ) 
+mus=rep(5,P_real); sds=rep(5,P_real); lambdas=rep(8,P_count)
+probs=list()
+for(i in 1:P_cat){
+  probs[[i]]=rep(1/C,C)
+}
 # family="Multinomial"; C=3
 for(i in sim_index){
   for(m in 1:length(mechanisms)){
