@@ -41,9 +41,12 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
   
   temp0 = torch.ones([1], dtype=torch.float64, device='cuda:0')
-  temp = torch.ones([1], dtype=torch.float64, device='cuda:0'); temp_min=torch.tensor(0.5,device="cuda:0",dtype=torch.float64)
+  temp = torch.ones([1], dtype=torch.float64, device='cuda:0')
+  temp_min=torch.tensor(0.5,device="cuda:0",dtype=torch.float64)
+  # temp_min=torch.tensor(0.1,device="cuda:0",dtype=torch.float64)
   # ANNEAL_RATE = torch.tensor(0.00003,device="cuda:0",dtype=torch.float64)  # https://github.com/vithursant/VAE-Gumbel-Softmax
   ANNEAL_RATE = torch.tensor(0.0006,device="cuda:0",dtype=torch.float64)  # https://github.com/vithursant/VAE-Gumbel-Softmax
+  # ANNEAL_RATE = torch.tensor(0.003,device="cuda:0",dtype=torch.float64)  # https://github.com/vithursant/VAE-Gumbel-Softmax
   
   if np.all(Rx==1) and np.all(Ry==1):
     Ignorable=True
@@ -52,13 +55,14 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   ids_real = data_types_x=='real'; p_real=np.sum(ids_real)
   ids_count = data_types_x=='count'; p_count=np.sum(ids_count)
   ids_cat = data_types_x=='cat'; p_cat = len(Cs) #p_cat=np.sum(ids_cat)
+  ids_pos = data_types_x=='pos'; p_pos = np.sum(ids_pos)
   
-  exists_types = [p_real>0, p_count>0, p_cat>0]   # real, count, cat types. do they exist?
-  print("exists_types (real, count, cat):")
+  exists_types = [p_real>0, p_count>0, p_pos>0, p_cat>0]   # real, count, cat types. do they exist?
+  print("exists_types (real, count, cat, pos):")
   print(exists_types)
-  print("p_real, p_count, p_cat:")
-  print(str(p_real) + ", " + str(p_count) + ", " + str(p_cat))
-  ids_types = [ids_real, ids_count, ids_cat]
+  print("p_real, p_count, p_pos, p_cat:")
+  print(str(p_real) + ", " + str(p_count) + ", " + str(p_pos) + ", " + str(p_cat))
+  ids_types = [ids_real, ids_count, ids_pos, ids_cat]
   print("ids_types:")
   print(ids_types)
   
@@ -204,7 +208,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     # NN_xm = network_maker(act_fun, n_hidden_layers, 2*p, h1, n_params_xm, True, False).cuda()
     if exists_types[0]: NNs_xm['real'] = network_maker(act_fun, n_hidden_layers, 2*p+dim_z, h1, 2*p_real, True, False).cuda()
     if exists_types[1]: NNs_xm['count'] = network_maker(act_fun, n_hidden_layers, 2*p+dim_z, h1, 2*p_count, True, False).cuda()
-    if exists_types[2]:
+    if exists_types[2]: NNs_xm['pos'] = network_maker(act_fun, n_hidden_layers, 2*p+dim_z, h1, 2*p_pos, True, False).cuda()
+    if exists_types[3]:
       NNs_xm['cat']=[]
       where_ids_cat = np.where(ids_cat)
       for ii in range(0, p_cat):
@@ -215,7 +220,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         # print(len(np.unique(X[~np.isnan(X[:,where_ids_cat[0][ii]]),where_ids_cat[0][ii]])))
         # Cs.append( len(np.unique(X[~np.isnan(X[:,where_ids_cat[0][ii]]),where_ids_cat[0][ii]])) )
         NNs_xm['cat'].append( network_maker(act_fun, n_hidden_layers, 2*p+dim_z, h1, int(Cs[ii]), True, False).cuda() )
-
+  
   if miss_y: NN_ym = network_maker(act_fun, n_hidden_layers, p+2, h1, n_params_ym, True, False).cuda()
   else: NN_ym = None
   # NN_y = network_maker(act_fun, 0, p, h2, n_params_y, False, False).cuda()
@@ -234,6 +239,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     decoders['count'] = network_maker(act_fun, n_hidden_layers, dim_z, h1, 2*p_count, True, False).cuda()
     # decoders['count'] = network_maker(act_fun, n_hidden_layers, dim_z, h1, p_count, True, False).cuda()      # poisson lambda parameter (count p(x))
   if exists_types[2]:
+    decoders['pos'] = network_maker(act_fun, n_hidden_layers, dim_z, h1, 2*p_pos, True, False).cuda()
+  if exists_types[3]:
     # X_cat = X[:,ids_cat]
     
     decoders['cat']=[]
@@ -321,6 +328,11 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       # p_xs['count'] = td.Poisson(rate=torch.nn.Softplus()(out_decoders['count'][..., :p_count])+0.001)    # no log transformation of data
       # params_x['count'] = {'lambda': torch.mean(torch.nn.Softplus()(out_decoders['count'][..., :p_count]).reshape([niws_z, batch_size,p_count]),0).detach().cpu().data.numpy()+0.001}
     if exists_types[2]:
+      out_decoders['pos'] = decoders['pos'](zgivenx)
+      # print(out_decoders['real'])
+      p_xs['pos'] = td.LogNormal(loc=out_decoders['pos'][..., :p_pos],scale=torch.nn.Softplus()(out_decoders['pos'][..., p_pos:(2*p_pos)])+0.001)
+      params_x['pos'] = {'mean': torch.mean(out_decoders['pos'][..., :p_pos].reshape([niws_z,batch_size,p_pos]),0).detach().cpu().data.numpy(),'scale': torch.mean(torch.nn.Softplus()(out_decoders['pos'][..., p_pos:(2*p_pos)]).reshape([niws_z,batch_size,p_pos]),0).detach().cpu().data.numpy()+0.001}
+    if exists_types[3]:
       for ii in range(0,p_cat):
         out_decoders['cat'].append( torch.mean(torch.clamp(torch.nn.Softmax(dim=1)( decoders['cat'][ii](zgivenx) ), min=0.0001, max=0.9999).reshape([niws_z,batch_size,-1]),0).reshape([batch_size,-1]) )
         p_xs['cat'].append( td.OneHotCategorical(probs = out_decoders['cat'][ii]) )
@@ -359,6 +371,10 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         qxmgivenxors['count'] = td.Normal(loc=outs_NN_xm['count'][..., :p_count],scale=torch.nn.Softplus()(outs_NN_xm['count'][..., p_count:(2*p_count)])+0.001)   # log transformed count data
         params_xm['count'] = {'mean': outs_NN_xm['count'][..., :p_count].detach().cpu().data.numpy(),'scale': torch.nn.Softplus()(outs_NN_xm['count'][..., p_count:(2*p_count)]).detach().cpu().data.numpy()+0.001}
       if exists_types[2]:
+        outs_NN_xm['pos'] = NNs_xm['pos'](torch.cat([iota_x,mask_x,zgivenx],1))
+        qxmgivenxors['pos'] = td.LogNormal(loc=outs_NN_xm['pos'][..., :p_pos],scale=torch.nn.Softplus()(outs_NN_xm['pos'][..., p_pos:(2*p_pos)])+0.001)   # log transformed count data
+        params_xm['pos'] = {'mean': outs_NN_xm['pos'][..., :p_pos].detach().cpu().data.numpy(),'scale': torch.nn.Softplus()(outs_NN_xm['pos'][..., p_pos:(2*p_pos)]).detach().cpu().data.numpy()+0.001}
+      if exists_types[3]:
         for ii in range(0,p_cat):
           outs_NN_xm['cat'].append( torch.clamp( torch.nn.Softmax(dim=1)( NNs_xm['cat'][ii](torch.cat([iota_x,mask_x,zgivenx],1)) ), min=0.0001, max=0.9999))
           # print("outs_NN_xm_cat " + str(ii) + ":")
@@ -374,19 +390,16 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         if exists_types[1]:
           xm_flat[:,ids_count] = qxmgivenxors['count'].rsample([niw]).reshape([niw*batch_size,-1])
           # xm_flat[:,ids_count] = torch.exp( qxmgivenxors['count'].rsample([niw]).reshape([niw*batch_size,-1]) )     # normal samples --> exp() to better approximate original counts
-        if exists_types[2]: 
+        if exists_types[2]: xm_flat[:,ids_pos] = qxmgivenxors['pos'].rsample([niw]).reshape([niw*batch_size,-1])
+        if exists_types[3]: 
           for ii in range(0,p_cat):
             if ii==0: C0=0; C1=int(Cs[ii])
             else: C0=C1; C1=C0 + int(Cs[ii])
             # print(qxmgivenxors['cat'][ii].rsample([niw]))   # niw, bs, p
             # xm_flat[:,where_ids_cat[0][ii]] = qxmgivenxors['cat'][ii].rsample([niw]).reshape([niw*batch_size,-1])
             # xm_flat_cat.append( qxmgivenxors['cat'][ii].rsample([niw]).reshape([niw*batch_size,-1]) )
-            xm_flat[:,(p_real + p_count + C0):(p_real + p_count + C1)] = qxmgivenxors['cat'][ii].rsample([niw]).reshape([niw*batch_size,-1])
-            # print("xm_flat:")
-            # print(xm_flat[:,(p_real + p_count + C0):(p_real + p_count + C1)])
-            # avoid boundary points
-            # xm_flat[xm_flat[:,(p_real + p_count + C0):(p_real + p_count + C1)]==0,(p_real + p_count + C0):(p_real + p_count + C1)] += 0.001
-            # xm_flat[xm_flat[:,(p_real + p_count + C0):(p_real + p_count + C1)]==1,(p_real + p_count + C0):(p_real + p_count + C1)] -= 0.001
+            xm_flat[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)] = qxmgivenxors['cat'][ii].rsample([niw]).reshape([niw*batch_size,-1])
+
         if torch.sum(torch.isnan(xm_flat))>0:
           print("minibatched data:")
           print(iota_x[:1])
@@ -565,29 +578,30 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       if exists_types[1]:
         logpx_count = torch.sum(p_xs['count'].log_prob(xincluded[:,ids_count]),axis=1).reshape([M*M,batch_size])
         # logpx_count = torch.sum(p_xs['count'].log_prob(torch.exp(xincluded[:,ids_count])),axis=1).reshape([M*M,batch_size])
-      if exists_types[2]:
+      if exists_types[2]: logpx_pos = torch.sum(p_xs['pos'].log_prob(xincluded[:,ids_pos]),axis=1).reshape([M*M,batch_size])
+      if exists_types[3]:
         # logpx_cat = torch.sum(p_x_cat.log_prob(xincluded[:,ids_cat]),axis=1).reshape([M*M,batch_size])
         for ii in range(0,p_cat):
           if ii==0: C0=0; C1=int(Cs[ii])
           else: C0=C1; C1=C0 + int(Cs[ii])
           
-          ## TRY THIS torch.nn.functional.one_hot(y).reshape([-1,C]) in log_prob(xincluded)?    # xincluded[:,where_ids_cat[0][ii]] --> xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)]?
-          if ii==0: logpx_cat = torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size, int(Cs[ii])])   ),axis=2).reshape([-1,batch_size])
-          else: logpx_cat = logpx_cat + torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size, int(Cs[ii])])   ),axis=2).reshape([-1,batch_size])
+          if ii==0: logpx_cat = torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size, int(Cs[ii])])   ),axis=2).reshape([-1,batch_size])
+          else: logpx_cat = logpx_cat + torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size, int(Cs[ii])])   ),axis=2).reshape([-1,batch_size])
 
       ## log q(xm|xo,r)
       # logqxmgivenxor = torch.sum(qxmgivenxor.log_prob(xincluded.reshape([M*M,batch_size,p])).reshape([M*M*batch_size,p])*(1-tiled_tiledmask_x),1).reshape([M*M,batch_size])
       if exists_types[0]: logqxmgivenxor_real = torch.sum(qxmgivenxors['real'].log_prob( xincluded[:,ids_real].reshape([-1,batch_size,p_real]) ).reshape([M*M*batch_size,p_real])*(1-tiled_tiledmask_x[:,ids_real]),1).reshape([-1,batch_size])
       if exists_types[1]: logqxmgivenxor_count = torch.sum(qxmgivenxors['count'].log_prob(xincluded[:,ids_count].reshape([M*M,batch_size,p_count])).reshape([M*M*batch_size,p_count])*(1-tiled_tiledmask_x[:,ids_count]),1).reshape([M*M,batch_size])
-      if exists_types[2]:
+      if exists_types[2]: logqxmgivenxor_pos = torch.sum(qxmgivenxors['pos'].log_prob( xincluded[:,ids_pos].reshape([-1,batch_size,p_pos]) ).reshape([M*M*batch_size,p_pos])*(1-tiled_tiledmask_x[:,ids_pos]),1).reshape([-1,batch_size])
+      if exists_types[3]:
         # logpx_cat = torch.sum(p_x_cat.log_prob(xincluded[:,ids_cat]),axis=1).reshape([M*M,batch_size])
         for ii in range(0,p_cat):
           if ii==0: C0=0; C1=int(Cs[ii])
           else: C0=C1; C1=C0 + int(Cs[ii])
           
-          if ii==0: logqxmgivenxor_cat = torch.sum(qxmgivenxors['cat'][ii].log_prob(  xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size, int(Cs[ii])])  ).reshape([M*M*batch_size,1])*(1-tiled_tiledmask_x[:,(p_real + p_count + C0):(p_real + p_count + C1)]),1).reshape([-1,batch_size])
-          else: logqxmgivenxor_cat = logqxmgivenxor_cat + torch.sum(qxmgivenxors['cat'][ii].log_prob(   xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size, int(Cs[ii])])   ).reshape([M*M*batch_size,1])*(1-tiled_tiledmask_x[:,(p_real + p_count + C0):(p_real + p_count + C1)]),1).reshape([-1,batch_size])
-      
+          if ii==0: logqxmgivenxor_cat = torch.sum(qxmgivenxors['cat'][ii].log_prob(  xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size, int(Cs[ii])])  ).reshape([M*M*batch_size,1])*(1-tiled_tiledmask_x[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)]),1).reshape([-1,batch_size])
+          else: logqxmgivenxor_cat = logqxmgivenxor_cat + torch.sum(qxmgivenxors['cat'][ii].log_prob(   xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size, int(Cs[ii])])   ).reshape([M*M*batch_size,1])*(1-tiled_tiledmask_x[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)]),1).reshape([-1,batch_size])
+
       logpxsum = torch.zeros([M*M,batch_size]).cuda(); logqxsum = torch.zeros([M*M,batch_size]).cuda()
       
       # log q(ym|yo,r,xm,xo)
@@ -605,31 +619,18 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         if exists_types[1]:
           logqxmgivenxor_count = torch.sum(qxmgivenxors['count'].log_prob(xincluded[:,ids_count].reshape([M,batch_size,p_count])).reshape([M*batch_size,p_count])*(1-tiledmask_x[:,ids_count]),1).reshape([M,batch_size])
           # logqxmgivenxor_count = torch.sum(qxmgivenxors['count'].log_prob(torch.log(xincluded[:,ids_count]).reshape([M*M,batch_size,p_count])).reshape([M*M*batch_size,p_count])*(1-tiled_tiledmask_x[:,ids_count]),1).reshape([M*M,batch_size])
-        if exists_types[2]:
-          # logpx_cat = torch.sum(p_x_cat.log_prob(xincluded[:,ids_cat]),axis=1).reshape([M*M,batch_size])      # xincluded[:,where_ids_cat[0][ii]] --> xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)]?
+        if exists_types[2]: logqxmgivenxor_pos = torch.sum(qxmgivenxors['pos'].log_prob(xincluded[:,ids_pos].reshape([M,batch_size,p_pos])).reshape([M*batch_size,p_pos])*(1-tiledmask_x[:,ids_pos]),1).reshape([M,batch_size])
+        if exists_types[3]:
           for ii in range(0,p_cat):
             if ii==0: C0=0; C1=int(Cs[ii])
             else: C0=C1; C1=C0 + int(Cs[ii])
-            # print("first:"); print(p_real + p_count + C0)
-            # print("last:"); print(p_real + p_count + C1)
-            # print("xincluded:"); print(xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)])
-            # print("qxm:")
-            # print(qxmgivenxors['cat'][ii])
-            # print(qxmgivenxors['cat'][ii].event_shape)
-            # print(qxmgivenxors['cat'][ii].batch_shape)
-            # print("xincluded (reshaped):")
-            # print(xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])]))
-            # print(xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])]).shape)
-            # print("logprob:")
-            # print(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])]) ))
-            # print(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])]) ).shape)
             
-            if ii==0: logqxmgivenxor_cat = torch.sum(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M*batch_size,-1])  *  (1-tiled_tiledmask_x[:,(p_real + p_count + C0)]),1).reshape([-1,batch_size])
-            else: logqxmgivenxor_cat = logqxmgivenxor_cat + torch.sum(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M*batch_size,-1])  *  (1-tiled_tiledmask_x[:,(p_real + p_count + C0)]),1).reshape([-1,batch_size])
+            if ii==0: logqxmgivenxor_cat = torch.sum(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M*batch_size,-1])  *  (1-tiled_tiledmask_x[:,(p_real + p_count + p_pos + C0)]),1).reshape([-1,batch_size])
+            else: logqxmgivenxor_cat = logqxmgivenxor_cat + torch.sum(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M*batch_size,-1])  *  (1-tiled_tiledmask_x[:,(p_real + p_count + p_pos + C0)]),1).reshape([-1,batch_size])
             # print("logqxmgivenxor_cat:")
             # print(logqxmgivenxor_cat)
             # print(logqxmgivenxor_cat.shape)
-        
+
         # log p(y|x)   # all cases set to be (niw*niw*bs) x p
         if family=="Multinomial": all_log_pygivenx = pygivenx.log_prob(yincluded)
         else: all_log_pygivenx = pygivenx.log_prob(yincluded.reshape([-1])) #yincluded: M*batch_size
@@ -650,15 +651,17 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         if exists_types[1]:
           logpx_count = torch.sum(p_xs['count'].log_prob(xincluded[:,ids_count].reshape([M,batch_size,p_count])),axis=2).reshape([M,batch_size])
           # logpx_count = torch.sum(p_xs['count'].log_prob(torch.exp(xincluded[:,ids_count]).reshape([M,batch_size,p_count])),axis=2).reshape([M,batch_size])
-        if exists_types[2]:
+        if exists_types[2]: logpx_pos = torch.sum(p_xs['pos'].log_prob(xincluded[:,ids_pos].reshape([M,batch_size,p_pos])),axis=2).reshape([M,batch_size])
+        if exists_types[3]:
           for ii in range(0,p_cat):
             if ii==0: C0=0; C1=int(Cs[ii])
             else: C0=C1; C1=C0 + int(Cs[ii])
-            # if ii==0: logpx_cat = p_xs['cat'][ii].log_prob(xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M,batch_size])
-            # else: logpx_cat = logpx_cat + p_xs['cat'][ii].log_prob(  xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])])  ).reshape([M,batch_size])
-            if ii==0: logpx_cat = torch.mean(p_xs['cat'][ii].log_prob(xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([niws_z*M,batch_size,int(Cs[ii])]) ).reshape([niws_z,M,batch_size]),0)
-            else: logpx_cat = logpx_cat + torch.mean(p_xs['cat'][ii].log_prob(  xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([niws_z*M,batch_size,int(Cs[ii])])  ).reshape([niws_z,M,batch_size]),0)
+            # if ii==0: logpx_cat = p_xs['cat'][ii].log_prob(xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M,batch_size])
+            # else: logpx_cat = logpx_cat + p_xs['cat'][ii].log_prob(  xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])])  ).reshape([M,batch_size])
+            if ii==0: logpx_cat = torch.mean(p_xs['cat'][ii].log_prob(xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([niws_z*M,batch_size,int(Cs[ii])]) ).reshape([niws_z,M,batch_size]),0)
+            else: logpx_cat = logpx_cat + torch.mean(p_xs['cat'][ii].log_prob(  xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([niws_z*M,batch_size,int(Cs[ii])])  ).reshape([niws_z,M,batch_size]),0)
         
+
         logpxsum = torch.zeros([M,batch_size]).cuda(); logqxsum = torch.zeros([M,batch_size]).cuda()
         
       elif not miss_x and miss_y: # case 2
@@ -686,13 +689,14 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         if exists_types[1]: 
           logpx_count = torch.sum(p_xs['count'].log_prob(xincluded[:,ids_count]),axis=1).reshape([M,batch_size])
           # logpx_count = torch.sum(p_xs['count'].log_prob(torch.exp(xincluded[:,ids_count])),axis=1).reshape([M,batch_size])
-        if exists_types[2]: 
+        if exists_types[2]: logpx_pos = torch.sum(p_xs['pos'].log_prob(xincluded[:,ids_pos]),axis=1).reshape([M,batch_size])
+        if exists_types[3]: 
           for ii in range(0,p_cat):
             if ii==0: C0=0; C1=int(Cs[ii])
             else: C0=C1; C1=C0 + int(Cs[ii])
-            if ii==0: logpx_cat = torch.sum(p_xs['cat'].log_prob( xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size,C[ii]])   ),axis=1).reshape([-1,batch_size])
-            else: logpx_cat = logpx_cat + torch.sum(p_xs['cat'].log_prob( xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size,C[ii]]) ),axis=1).reshape([-1,batch_size])
-        
+            if ii==0: logpx_cat = torch.sum(p_xs['cat'].log_prob( xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size,C[ii]])   ),axis=1).reshape([-1,batch_size])
+            else: logpx_cat = logpx_cat + torch.sum(p_xs['cat'].log_prob( xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size,C[ii]]) ),axis=1).reshape([-1,batch_size])
+
         logpxsum = torch.zeros([M,batch_size]).cuda(); logqxsum = torch.zeros([M,batch_size]).cuda()
       else:     # no missing
         logprgivenxy=0; all_logprgivenxy=0; logqxsum=0; logqymgivenyor=0
@@ -713,13 +717,14 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         if exists_types[1]:
           logpx_count = torch.sum(p_xs['count'].log_prob(xincluded[:,ids_count]),axis=1).reshape([1,batch_size])
           # logpx_count = torch.sum(p_xs['count'].log_prob(torch.exp(xincluded[:,ids_count])),axis=1).reshape([1,batch_size])
-        if exists_types[2]:
+        if exists_types[2]: logpx_pos = torch.sum(p_xs['pos'].log_prob(xincluded[:,ids_pos]),axis=1).reshape([1,batch_size])
+        if exists_types[3]:
           for ii in range(0,p_cat):
             if ii==0: C0=0; C1=int(Cs[ii])
             else: C0=C1; C1=C0 + int(Cs[ii])
-            if ii==0: logpx_cat = torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size,C])   ),axis=1).reshape([-1,batch_size])
-            else: logpx_cat = logpx_cat + torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size,C])   ),axis=1).reshape([-1,batch_size])
-          
+            if ii==0: logpx_cat = torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size,C])   ),axis=1).reshape([-1,batch_size])
+            else: logpx_cat = logpx_cat + torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size,C])   ),axis=1).reshape([-1,batch_size])
+
         logpxsum = torch.zeros([1,batch_size]).cuda(); logqxsum = torch.zeros([1,batch_size]).cuda()
 
       
@@ -733,7 +738,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     sum_logpx = 0
     if exists_types[0]: sum_logpx = sum_logpx + np.sum(logpx_real.cpu().data.numpy())
     if exists_types[1]: sum_logpx = sum_logpx + np.sum(logpx_count.cpu().data.numpy())
-    if exists_types[2]: sum_logpx = sum_logpx + np.sum(logpx_cat.cpu().data.numpy())
+    if exists_types[2]: sum_logpx = sum_logpx + np.sum(logpx_pos.cpu().data.numpy())
+    if exists_types[3]: sum_logpx = sum_logpx + np.sum(logpx_cat.cpu().data.numpy())
 
     if miss_y: sum_logqym = np.sum(logqymgivenyor.cpu().data.numpy())
     else: sum_logqym = 0; logqymgivenyor=0
@@ -750,8 +756,9 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     #initialized these sum terms earlier
     if exists_types[0]: logpxsum = logpxsum + logpx_real; logqxsum = logqxsum + logqxmgivenxor_real
     if exists_types[1]: logpxsum = logpxsum + logpx_count; logqxsum = logqxsum + logqxmgivenxor_count
-    if exists_types[2]: logpxsum = logpxsum + logpx_cat; logqxsum = logqxsum + logqxmgivenxor_cat
-    
+    if exists_types[2]: logpxsum = logpxsum + logpx_pos; logqxsum = logqxsum + logqxmgivenxor_pos
+    if exists_types[3]: logpxsum = logpxsum + logpx_cat; logqxsum = logqxsum + logqxmgivenxor_cat
+
     logpz = p_z.log_prob(zgivenx).reshape([-1,batch_size])
     # print(logpz.shape)
     # print(zgivenx.shape)
@@ -814,29 +821,31 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       if exists_types[1]:
         logpx_count = torch.sum(p_xs['count'].log_prob(xincluded[:,ids_count]),axis=1).reshape([M*M,batch_size])
         # logpx_count = torch.sum(p_xs['count'].log_prob(torch.exp(xincluded[:,ids_count])),axis=1).reshape([M*M,batch_size])
-      if exists_types[2]:
+      if exists_types[2]: logpx_pos = torch.sum(p_xs['pos'].log_prob(xincluded[:,ids_pos]),axis=1).reshape([M*M,batch_size])
+      if exists_types[3]:
         # logpx_cat = torch.sum(p_x_cat.log_prob(xincluded[:,ids_cat]),axis=1).reshape([M*M,batch_size])
         for ii in range(0,p_cat):
           if ii==0: C0=0; C1=int(Cs[ii])
           else: C0=C1; C1=C0 + int(Cs[ii])
           
-          ## TRY THIS torch.nn.functional.one_hot(y).reshape([-1,C]) in log_prob(xincluded)?    # xincluded[:,where_ids_cat[0][ii]] --> xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)]?
-          if ii==0: logpx_cat = torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size, int(Cs[ii])])   ),axis=2).reshape([-1,batch_size])
-          else: logpx_cat = logpx_cat + torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size, int(Cs[ii])])   ),axis=2).reshape([-1,batch_size])
+          ## TRY THIS torch.nn.functional.one_hot(y).reshape([-1,C]) in log_prob(xincluded)?    # xincluded[:,where_ids_cat[0][ii]] --> xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)]?
+          if ii==0: logpx_cat = torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size, int(Cs[ii])])   ),axis=2).reshape([-1,batch_size])
+          else: logpx_cat = logpx_cat + torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size, int(Cs[ii])])   ),axis=2).reshape([-1,batch_size])
 
       ## log q(xm|xo,r)
       # logqxmgivenxor = torch.sum(qxmgivenxor.log_prob(xincluded.reshape([M*M,batch_size,p])).reshape([M*M*batch_size,p])*(1-tiled_tiledmask_x),1).reshape([M*M,batch_size])
       if exists_types[0]: logqxmgivenxor_real = torch.sum(qxmgivenxors['real'].log_prob( xincluded[:,ids_real].reshape([-1,batch_size,p_real]) ).reshape([M*M*batch_size,p_real])*(1-tiled_tiledmask_x[:,ids_real]),1).reshape([-1,batch_size])
       if exists_types[1]: logqxmgivenxor_count = torch.sum(qxmgivenxors['count'].log_prob(xincluded[:,ids_count].reshape([M*M,batch_size,p_count])).reshape([M*M*batch_size,p_count])*(1-tiled_tiledmask_x[:,ids_count]),1).reshape([M*M,batch_size])
-      if exists_types[2]:
+      if exists_types[2]: logqxmgivenxor_pos = torch.sum(qxmgivenxors['pos'].log_prob( xincluded[:,ids_pos].reshape([-1,batch_size,p_pos]) ).reshape([M*M*batch_size,p_pos])*(1-tiled_tiledmask_x[:,ids_pos]),1).reshape([-1,batch_size])
+      if exists_types[3]:
         # logpx_cat = torch.sum(p_x_cat.log_prob(xincluded[:,ids_cat]),axis=1).reshape([M*M,batch_size])
         for ii in range(0,p_cat):
           if ii==0: C0=0; C1=int(Cs[ii])
           else: C0=C1; C1=C0 + int(Cs[ii])
           
-          if ii==0: logqxmgivenxor_cat = torch.sum(qxmgivenxors['cat'][ii].log_prob(  xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size, int(Cs[ii])])  ).reshape([M*M*batch_size,1])*(1-tiled_tiledmask_x[:,(p_real + p_count + C0):(p_real + p_count + C1)]),1).reshape([-1,batch_size])
-          else: logqxmgivenxor_cat = logqxmgivenxor_cat + torch.sum(qxmgivenxors['cat'][ii].log_prob(   xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size, int(Cs[ii])])   ).reshape([M*M*batch_size,1])*(1-tiled_tiledmask_x[:,(p_real + p_count + C0):(p_real + p_count + C1)]),1).reshape([-1,batch_size])
-      
+          if ii==0: logqxmgivenxor_cat = torch.sum(qxmgivenxors['cat'][ii].log_prob(  xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size, int(Cs[ii])])  ).reshape([M*M*batch_size,1])*(1-tiled_tiledmask_x[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)]),1).reshape([-1,batch_size])
+          else: logqxmgivenxor_cat = logqxmgivenxor_cat + torch.sum(qxmgivenxors['cat'][ii].log_prob(   xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size, int(Cs[ii])])   ).reshape([M*M*batch_size,1])*(1-tiled_tiledmask_x[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)]),1).reshape([-1,batch_size])
+
       logpxsum = torch.zeros([M*M,batch_size]).cuda(); logqxsum = torch.zeros([M*M,batch_size]).cuda()
       
       # log q(ym|yo,r,xm,xo)
@@ -854,31 +863,32 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         if exists_types[1]:
           logqxmgivenxor_count = torch.sum(qxmgivenxors['count'].log_prob(xincluded[:,ids_count].reshape([M,batch_size,p_count])).reshape([M*batch_size,p_count])*(1-tiledmask_x[:,ids_count]),1).reshape([M,batch_size])
           # logqxmgivenxor_count = torch.sum(qxmgivenxors['count'].log_prob(torch.log(xincluded[:,ids_count]).reshape([M*M,batch_size,p_count])).reshape([M*M*batch_size,p_count])*(1-tiled_tiledmask_x[:,ids_count]),1).reshape([M*M,batch_size])
-        if exists_types[2]:
-          # logpx_cat = torch.sum(p_x_cat.log_prob(xincluded[:,ids_cat]),axis=1).reshape([M*M,batch_size])      # xincluded[:,where_ids_cat[0][ii]] --> xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)]?
+        if exists_types[2]: logqxmgivenxor_pos = torch.sum(qxmgivenxors['pos'].log_prob(xincluded[:,ids_pos].reshape([M,batch_size,p_pos])).reshape([M*batch_size,p_pos])*(1-tiledmask_x[:,ids_pos]),1).reshape([M,batch_size])
+        if exists_types[3]:
+          # logpx_cat = torch.sum(p_x_cat.log_prob(xincluded[:,ids_cat]),axis=1).reshape([M*M,batch_size])      # xincluded[:,where_ids_cat[0][ii]] --> xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)]?
           for ii in range(0,p_cat):
             if ii==0: C0=0; C1=int(Cs[ii])
             else: C0=C1; C1=C0 + int(Cs[ii])
-            # print("first:"); print(p_real + p_count + C0)
-            # print("last:"); print(p_real + p_count + C1)
-            # print("xincluded:"); print(xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)])
+            # print("first:"); print(p_real + p_count + p_pos + C0)
+            # print("last:"); print(p_real + p_count + p_pos + C1)
+            # print("xincluded:"); print(xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)])
             # print("qxm:")
             # print(qxmgivenxors['cat'][ii])
             # print(qxmgivenxors['cat'][ii].event_shape)
             # print(qxmgivenxors['cat'][ii].batch_shape)
             # print("xincluded (reshaped):")
-            # print(xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])]))
-            # print(xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])]).shape)
+            # print(xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])]))
+            # print(xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])]).shape)
             # print("logprob:")
-            # print(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])]) ))
-            # print(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])]) ).shape)
+            # print(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])]) ))
+            # print(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])]) ).shape)
             
-            if ii==0: logqxmgivenxor_cat = torch.sum(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M*batch_size,-1])  *  (1-tiled_tiledmask_x[:,(p_real + p_count + C0)]),1).reshape([-1,batch_size])
-            else: logqxmgivenxor_cat = logqxmgivenxor_cat + torch.sum(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M*batch_size,-1])  *  (1-tiled_tiledmask_x[:,(p_real + p_count + C0)]),1).reshape([-1,batch_size])
+            if ii==0: logqxmgivenxor_cat = torch.sum(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M*batch_size,-1])  *  (1-tiled_tiledmask_x[:,(p_real + p_count + p_pos + C0)]),1).reshape([-1,batch_size])
+            else: logqxmgivenxor_cat = logqxmgivenxor_cat + torch.sum(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M*batch_size,-1])  *  (1-tiled_tiledmask_x[:,(p_real + p_count + p_pos + C0)]),1).reshape([-1,batch_size])
             # print("logqxmgivenxor_cat:")
             # print(logqxmgivenxor_cat)
             # print(logqxmgivenxor_cat.shape)
-        
+
         # log p(y|x)   # all cases set to be (niw*niw*bs) x p
         if family=="Multinomial": all_log_pygivenx = pygivenx.log_prob(yincluded)
         else: all_log_pygivenx = pygivenx.log_prob(yincluded.reshape([-1])) #yincluded: M*batch_size
@@ -899,15 +909,17 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         if exists_types[1]:
           logpx_count = torch.sum(p_xs['count'].log_prob(xincluded[:,ids_count].reshape([M,batch_size,p_count])),axis=2).reshape([M,batch_size])
           # logpx_count = torch.sum(p_xs['count'].log_prob(torch.exp(xincluded[:,ids_count]).reshape([M,batch_size,p_count])),axis=2).reshape([M,batch_size])
-        if exists_types[2]:
+        if exists_types[2]: logpx_pos = torch.sum(p_xs['pos'].log_prob(xincluded[:,ids_pos].reshape([M,batch_size,p_pos])),axis=2).reshape([M,batch_size])
+        if exists_types[3]:
           for ii in range(0,p_cat):
             if ii==0: C0=0; C1=int(Cs[ii])
             else: C0=C1; C1=C0 + int(Cs[ii])
-            # if ii==0: logpx_cat = p_xs['cat'][ii].log_prob(xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M,batch_size])
-            # else: logpx_cat = logpx_cat + p_xs['cat'][ii].log_prob(  xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([M,batch_size,int(Cs[ii])])  ).reshape([M,batch_size])
-            if ii==0: logpx_cat = torch.mean(p_xs['cat'][ii].log_prob(xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([niws_z*M,batch_size,int(Cs[ii])]) ).reshape([niws_z,M,batch_size]),0)
-            else: logpx_cat = logpx_cat + torch.mean(p_xs['cat'][ii].log_prob(  xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([niws_z*M,batch_size,int(Cs[ii])])  ).reshape([niws_z,M,batch_size]),0)
+            # if ii==0: logpx_cat = p_xs['cat'][ii].log_prob(xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M,batch_size])
+            # else: logpx_cat = logpx_cat + p_xs['cat'][ii].log_prob(  xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])])  ).reshape([M,batch_size])
+            if ii==0: logpx_cat = torch.mean(p_xs['cat'][ii].log_prob(xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([niws_z*M,batch_size,int(Cs[ii])]) ).reshape([niws_z,M,batch_size]),0)
+            else: logpx_cat = logpx_cat + torch.mean(p_xs['cat'][ii].log_prob(  xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([niws_z*M,batch_size,int(Cs[ii])])  ).reshape([niws_z,M,batch_size]),0)
         
+
         logpxsum = torch.zeros([M,batch_size]).cuda(); logqxsum = torch.zeros([M,batch_size]).cuda()
         
       elif not miss_x and miss_y: # case 2
@@ -935,13 +947,14 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         if exists_types[1]: 
           logpx_count = torch.sum(p_xs['count'].log_prob(xincluded[:,ids_count]),axis=1).reshape([M,batch_size])
           # logpx_count = torch.sum(p_xs['count'].log_prob(torch.exp(xincluded[:,ids_count])),axis=1).reshape([M,batch_size])
-        if exists_types[2]: 
+        if exists_types[2]: logpx_pos = torch.sum(p_xs['pos'].log_prob(xincluded[:,ids_pos]),axis=1).reshape([M,batch_size])
+        if exists_types[3]: 
           for ii in range(0,p_cat):
             if ii==0: C0=0; C1=int(Cs[ii])
             else: C0=C1; C1=C0 + int(Cs[ii])
-            if ii==0: logpx_cat = torch.sum(p_xs['cat'].log_prob( xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size,C[ii]])   ),axis=1).reshape([-1,batch_size])
-            else: logpx_cat = logpx_cat + torch.sum(p_xs['cat'].log_prob( xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size,C[ii]]) ),axis=1).reshape([-1,batch_size])
-        
+            if ii==0: logpx_cat = torch.sum(p_xs['cat'].log_prob( xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size,C[ii]])   ),axis=1).reshape([-1,batch_size])
+            else: logpx_cat = logpx_cat + torch.sum(p_xs['cat'].log_prob( xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size,C[ii]]) ),axis=1).reshape([-1,batch_size])
+
         logpxsum = torch.zeros([M,batch_size]).cuda(); logqxsum = torch.zeros([M,batch_size]).cuda()
       else:     # no missing
         logprgivenxy=0; all_logprgivenxy=0; logqxsum=0; logqymgivenyor=0
@@ -962,13 +975,14 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         if exists_types[1]:
           logpx_count = torch.sum(p_xs['count'].log_prob(xincluded[:,ids_count]),axis=1).reshape([1,batch_size])
           # logpx_count = torch.sum(p_xs['count'].log_prob(torch.exp(xincluded[:,ids_count])),axis=1).reshape([1,batch_size])
-        if exists_types[2]:
+        if exists_types[2]: logpx_pos = torch.sum(p_xs['pos'].log_prob(xincluded[:,ids_pos]),axis=1).reshape([1,batch_size])
+        if exists_types[3]:
           for ii in range(0,p_cat):
             if ii==0: C0=0; C1=int(Cs[ii])
             else: C0=C1; C1=C0 + int(Cs[ii])
-            if ii==0: logpx_cat = torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size,C])   ),axis=1).reshape([-1,batch_size])
-            else: logpx_cat = logpx_cat + torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + C0):(p_real + p_count + C1)].reshape([-1,batch_size,C])   ),axis=1).reshape([-1,batch_size])
-          
+            if ii==0: logpx_cat = torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size,C])   ),axis=1).reshape([-1,batch_size])
+            else: logpx_cat = logpx_cat + torch.sum(p_xs['cat'].log_prob(   xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([-1,batch_size,C])   ),axis=1).reshape([-1,batch_size])
+
         logpxsum = torch.zeros([1,batch_size]).cuda(); logqxsum = torch.zeros([1,batch_size]).cuda()
 
       
@@ -982,20 +996,17 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       xm = torch.zeros([batch_size, p]).cuda()
       # need to sample real, count, cat data and concatenate
       if exists_types[0]:
-        # xmgivenxor_real = td.Independent(td.Normal(loc=params_xm['real']['mean'],scale=params_xm['real']['scale']),1)
         xm[:,ids_real] = torch.mean(qxmgivenxors['real'].sample([L]).reshape([L,-1]),0).reshape([batch_size, p_real]).detach()
       if exists_types[1]:
-        # xmgivenxor_count = td.Independent(td.Normal(loc=params_xm['count']['mean'],scale=params_xm['count']['scale']),1)
         xm[:,ids_count] = torch.mean(qxmgivenxors['count'].sample([L]).reshape([L,-1]),0).reshape([batch_size, p_count]).detach()
-      if exists_types[2]: 
+      if exists_types[2]:
+        xm[:,ids_pos] = torch.mean(qxmgivenxors['pos'].sample([L]).reshape([L,-1]),0).reshape([batch_size, p_pos]).detach()
+      if exists_types[3]: 
         for ii in range(0,p_cat):
           if ii==0: C0=0; C1=int(Cs[ii])
           else: C0=C1; C1=C0 + int(Cs[ii])
-          # print(qxmgivenxors['cat'][ii].sample([L])[0:2,4,:])
-          # print(ii)
-          # print(p_real + p_count + C0)
-          # print(p_real + p_count + C1)
-          xm[:,(p_real + p_count + C0):(p_real + p_count + C1)] = torch.mean(qxmgivenxors['cat'][ii].sample([L]).reshape([L,batch_size,int(Cs[ii])]),0).reshape([batch_size,int(Cs[ii])]).detach()
+          xm[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)] = torch.mean(qxmgivenxors['cat'][ii].sample([L]).reshape([L,batch_size,int(Cs[ii])]),0).reshape([batch_size,int(Cs[ii])]).detach()
+      
     else:
       xm=None
     if miss_y:
@@ -1028,7 +1039,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   if miss_x:
     if exists_types[0]: params = params + list(NNs_xm['real'].parameters()); NNs_xm['real'].apply(weights_init)
     if exists_types[1]: params = params + list(NNs_xm['count'].parameters()); NNs_xm['count'].apply(weights_init)
-    if exists_types[2]:
+    if exists_types[2]: params = params + list(NNs_xm['pos'].parameters()); NNs_xm['pos'].apply(weights_init)
+    if exists_types[3]:
       for ii in range(0, p_cat):
         params = params + list(NNs_xm['cat'][ii].parameters()); NNs_xm['cat'][ii].apply(weights_init)
   if miss_y: params = params + list(NN_ym.parameters())
@@ -1036,9 +1048,10 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   encoder.apply(weights_init)
   if exists_types[0]: params = params + list(decoders['real'].parameters()); decoders['real'].apply(weights_init)
   if exists_types[1]: params = params + list(decoders['count'].parameters()); decoders['count'].apply(weights_init)
-  if exists_types[2]:
+  if exists_types[2]: params = params + list(decoders['pos'].parameters()); decoders['pos'].apply(weights_init)
+  if exists_types[3]:
     for ii in range(0,p_cat):
-        params = params + list(decoders['cat'][ii].parameters()); decoders['cat'][ii].apply(weights_init)
+      params = params + list(decoders['cat'][ii].parameters()); decoders['cat'][ii].apply(weights_init)
   optimizer = optim.Adam(params,lr=lr)
   # optimizer.add_param_group({"params":mu_x})
   # optimizer.add_param_group({"params":scale_x})
@@ -1096,16 +1109,22 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     # params_x['count'] = {'lambda': np.empty([n,p_count])}
     if miss_x: params_xm['count'] = {'mean': np.empty([n,p_count]), 'scale': np.empty([n,p_count])}    # N x p_count
   if exists_types[2]:
+    params_x['pos'] = {'mean': np.empty([n,p_pos]), 'scale': np.empty([n,p_pos])}
+    if miss_x: params_xm['pos'] = {'mean': np.empty([n,p_pos]), 'scale': np.empty([n,p_pos])}      # N x p_real
+  if exists_types[3]:
     for ii in range(0, p_cat):
       params_x['cat'].append(np.empty([n,int(Cs[ii])]))                           # put matrix of N x C here. prob torch.zeros()
       if miss_x: params_xm['cat'].append(np.empty([n,int(Cs[ii])]))
   params_r = {'probs': np.empty([n,n_params_r])}                                    # N x n_params_r
   params_z = {'mean': np.empty([n,dim_z]), 'scale': np.empty([n,dim_z])}
   
+  sys.stdout.flush()
+  
   if train==1:
     print("Training")
     # Training+Imputing
     for ep in range(1,n_epochs):
+      sys.stdout.flush()
       # print("Epoch" + str(ep))
       # t = torch.cuda.get_device_properties(0).total_memory
       # r = torch.cuda.memory_reserved(0) 
@@ -1137,10 +1156,11 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         if miss_x: 
           if exists_types[0]: NNs_xm['real'].zero_grad()
           if exists_types[1]: NNs_xm['count'].zero_grad()
-          if exists_types[2]:
+          if exists_types[2]: NNs_xm['pos'].zero_grad()
+          if exists_types[3]:
             for ii in range(0,p_cat):
               NNs_xm['cat'][ii].zero_grad()
-        
+
         if miss_y: NN_ym.zero_grad()
         NN_y.zero_grad()
         
@@ -1148,7 +1168,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         encoder.zero_grad()
         if exists_types[0]: decoders['real'].zero_grad()
         if exists_types[1]: decoders['count'].zero_grad()
-        if exists_types[2]:
+        if exists_types[2]: decoders['pos'].zero_grad()
+        if exists_types[3]:
           for ii in range(0,p_cat):
             decoders['cat'][ii].zero_grad()
         #mu_x.zero_grad(); scale_x.zero_grad()
@@ -1173,10 +1194,13 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
           # params_x['count']['lambda'][splits[it],:] = temp_params_x['count']['lambda']
           if miss_x: params_xm['count']['mean'][splits[it],:] = temp_params_xm['count']['mean']; params_xm['count']['scale'][splits[it],:] = temp_params_xm['count']['scale']
         if exists_types[2]:
+          params_x['pos']['mean'][splits[it],:] = temp_params_x['pos']['mean']; params_x['pos']['scale'][splits[it],:] = temp_params_x['pos']['scale']
+          if miss_x: params_xm['pos']['mean'][splits[it],:] = temp_params_xm['pos']['mean']; params_xm['pos']['scale'][splits[it],:] = temp_params_xm['pos']['scale']
+        if exists_types[3]:
           for ii in range(0, p_cat):
             params_x['cat'][ii][splits[it],:] = temp_params_x['cat'][ii]
             if miss_x: params_xm['cat'][ii][splits[it],:] = temp_params_xm['cat'][ii]
-
+        
         if family=="Gaussian":
           params_y['mean'][splits[it],:] = temp_params_y['mean']; params_y['scale'][splits[it],:] = temp_params_y['scale']
           if miss_y: params_ym['mean'][splits[it],:] = temp_params_ym['mean']; params_ym['scale'][splits[it],:] = temp_params_ym['scale']
@@ -1335,8 +1359,9 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         # if exists_types[1]: err_x_count = mse(((xhat*norm_sds_x) + norm_means_x)[ids_count], ((xfull*norm_sds_x)+norm_means_x)[ids_count], mask_x[:,ids_count])
         if exists_types[0]: err_x_real = mse(xhat[:,ids_real], xfull[:,ids_real], mask_x[:,ids_real])
         if exists_types[1]: err_x_count = mse(xhat[:,ids_count], xfull[:,ids_count], mask_x[:,ids_count])
-        if exists_types[2]: err_x_cat = mse(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat])
-        
+        if exists_types[2]: err_x_pos = mse(xhat[:,ids_pos], xfull[:,ids_pos], mask_x[:,ids_pos])
+        if exists_types[3]: err_x_cat = mse(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat])
+
         err_y = mse(yhat*norm_sd_y+norm_mean_y, yfull*norm_sd_y+norm_mean_y, mask_y)
 
         # mse_train_miss_x = np.append(mse_train_miss_x,np.array([err_x['miss']]),axis=0)
@@ -1351,13 +1376,16 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
           print('Observed MSE x_count (log-transformed):  %g' %err_x_count['obs'])   # these aren't reconstructed/imputed
           print('Missing MSE x_count (log-transformed):  %g' %err_x_count['miss'])
         if exists_types[2]:
+          print('Observed MSE x_pos:  %g' %err_x_pos['obs'])   # these aren't reconstructed/imputed
+          print('Missing MSE x_pos:  %g' %err_x_pos['miss'])
+        if exists_types[3]:
           print('Observed MSE x_cat (probs):  %g' %err_x_cat['obs'])   # these aren't reconstructed/imputed
           print('Missing MSE x_cat (probs):  %g' %err_x_cat['miss'])
         print('Observed MSE y:  %g' %err_y['obs'])   # these aren't reconstructed/imputed
         print('Missing MSE y:  %g' %err_y['miss'])
         print('-----')
-      
-      temp = torch.max(temp0*torch.exp(-ANNEAL_RATE*ep), temp_min)  # anneal the temp after the imputation
+        temp = torch.max(temp0*torch.exp(-ANNEAL_RATE*ep), temp_min)  # anneal the temp once every 100 iters? (Jang et al does every 1000 iters)
+      # temp = torch.max(temp0*torch.exp(-ANNEAL_RATE*ep), temp_min)  # anneal the temp after each iter?
 
     #plt.plot(range(1,n_epochs,100),mse_train_obs,color="blue")
     #plt.title("Imputation MSE (Observed)")
@@ -1417,6 +1445,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     else: saved_model={'NNs_xm': NNs_xm, 'NN_ym': NN_ym, 'NN_y': NN_y,'encoder':encoder}
     
     saved_model['decoders'] = decoders
+    sys.stdout.flush()
     
     # mse_train={'miss_x':mse_train_miss_x,'obs_x':mse_train_obs_x, 'miss_y':mse_train_miss_y,'obs_y':mse_train_obs_y}
     train_params = {'h1':h1, 'h2':h2, 'h3':h3, 'sigma':sigma, 'bs':bs, 'n_epochs':n_epochs, 'lr':lr, 'L':L, 'M':M, 'dim_z':dim_z, 'covars_r_x':covars_r_x, 'covars_r_y':covars_r_y, 'n_hidden_layers':n_hidden_layers, 'n_hidden_layers_r':n_hidden_layers_r, 'pre_impute_value':pre_impute_value}
@@ -1437,10 +1466,12 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       if exists_types[1]:
         all_params['xm']['count'] = {'mean': params_xm['count']['mean'], 'scale': params_xm['count']['scale']}
       if exists_types[2]:
+        all_params['xm']['pos'] = {'mean': params_xm['pos']['mean'], 'scale': params_xm['pos']['scale']}
+      if exists_types[3]:
         all_params['xm']['cat'] = {}
         for ii in range(0,p_cat):
           all_params['xm']['cat']['probs'] = params_xm['cat'][ii]
-
+      
     all_params['x']={}
     if exists_types[0]:
       all_params['x']['real'] = {'mean': params_x['real']['mean'], 'scale': params_x['real']['scale']}
@@ -1448,10 +1479,12 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       all_params['x']['count'] = {'mean': params_x['count']['mean'], 'scale': params_x['count']['scale']}
       # all_params['x']['count'] = {'lambda': loss_fit['params_x']['count']['lambda']}
     if exists_types[2]:
+      all_params['x']['pos'] = {'mean': params_x['pos']['mean'], 'scale': params_x['pos']['scale']}
+    if exists_types[3]:
       all_params['x']['cat'] = {}
       for ii in range(0,p_cat):
         all_params['x']['cat']['probs'] = params_x['cat'][ii]
-
+    
     if miss_y: all_params['ym'] = {'mean': params_ym['mean'],'scale': params_ym['scale']}
     
     return {'train_params':train_params, 'all_params':all_params, 'loss_fit':loss_fit,'impute_fit':impute_fit,'saved_model': saved_model,'LB': LB,'LB_epoch': LB_epoch,'time_train': time_train,'time_impute': time_impute, 'xhat': xhat, 'yhat':yhat, 'yfull':yfull, 'mask_x': mask_x, 'mask_y':mask_y, 'norm_means_x':norm_means_x, 'norm_sds_x':norm_sds_x,'norm_mean_y':norm_mean_y, 'norm_sd_y':norm_sd_y}
@@ -1474,7 +1507,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       if (miss_x):
         if exists_types[0]: NNs_xm['real'].zero_grad()
         if exists_types[1]: NNs_xm['count'].zero_grad()
-        if exists_types[2]:
+        if exists_types[2]: NNs_xm['pos'].zero_grad()
+        if exists_types[3]:
           for ii in range(0,p_cat):
             NNs_xm['cat'][ii].zero_grad()
       if (miss_y): NN_ym.zero_grad()
@@ -1484,7 +1518,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       encoder.zero_grad()
       if exists_types[0]: decoders['real'].zero_grad()
       if exists_types[1]: decoders['count'].zero_grad()
-      if exists_types[2]: 
+      if exists_types[2]: decoders['pos'].zero_grad()
+      if exists_types[3]: 
         for ii in range(0,p_cat):
           decoders['cat'][ii].zero_grad()
 
@@ -1518,7 +1553,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         if miss_x: 
           if exists_types[0]: NNs_xm['real'].zero_grad()
           if exists_types[1]: NNs_xm['count'].zero_grad()
-          if exists_types[2]:
+          if exists_types[2]: NNs_xm['pos'].zero_grad()
+          if exists_types[3]:
             for ii in range(0,p_cat):
               NNs_xm['cat'][ii].zero_grad()
         
@@ -1529,7 +1565,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         encoder.zero_grad()
         if exists_types[0]: decoders['real'].zero_grad()
         if exists_types[1]: decoders['count'].zero_grad()
-        if exists_types[2]:
+        if exists_types[2]: decoders['pos'].zero_grad()
+        if exists_types[3]:
           for ii in range(0,p_cat):
             decoders['cat'][ii].zero_grad()
         #mu_x.zero_grad(); scale_x.zero_grad()
@@ -1552,9 +1589,13 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
           # params_x['count']['lambda'][splits[it],:] = temp_params_x['count']['lambda']
           if miss_x: params_xm['count']['mean'][splits[it],:] = temp_params_xm['count']['mean']; params_xm['count']['scale'][splits[it],:] = temp_params_xm['count']['scale']
         if exists_types[2]:
+          params_x['pos']['mean'][splits[it],:] = temp_params_x['pos']['mean']; params_x['pos']['scale'][splits[it],:] = temp_params_x['pos']['scale']
+          if miss_x: params_xm['pos']['mean'][splits[it],:] = temp_params_xm['pos']['mean']; params_xm['pos']['scale'][splits[it],:] = temp_params_xm['pos']['scale']
+        if exists_types[3]:
           for ii in range(0, p_cat):
             params_x['cat'][ii][splits[it],:] = temp_params_x['cat'][ii]
             if miss_x: params_xm['cat'][ii][splits[it],:] = temp_params_xm['cat'][ii]
+        
 
         if family=="Gaussian":
           params_y['mean'][splits[it],:] = temp_params_y['mean']; params_y['scale'][splits[it],:] = temp_params_y['scale']
@@ -1640,8 +1681,9 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       # if exists_types[1]: err_x_count = mse(((xhat*norm_sds_x) + norm_means_x)[ids_count], ((xfull*norm_sds_x)+norm_means_x)[ids_count], mask_x[:,ids_count])
       if exists_types[0]: err_x_real = mse(xhat[:,ids_real], xfull[:,ids_real], mask_x[:,ids_real])
       if exists_types[1]: err_x_count = mse(xhat[:,ids_count], xfull[:,ids_count], mask_x[:,ids_count])
-      if exists_types[2]: err_x_cat = mse(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat])
-      
+      if exists_types[2]: err_x_pos = mse(xhat[:,ids_pos], xfull[:,ids_pos], mask_x[:,ids_pos])
+      if exists_types[3]: err_x_cat = mse(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat])
+
       err_y = mse(yhat*norm_sd_y+norm_mean_y, yfull*norm_sd_y+norm_mean_y, mask_y)
       if exists_types[0]:
         print('Observed MSE x_real:  %g' %err_x_real['obs'])   # these aren't reconstructed/imputed
@@ -1650,6 +1692,9 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         print('Observed MSE x_count (log-transformed):  %g' %err_x_count['obs'])   # these aren't reconstructed/imputed
         print('Missing MSE x_count (log-transformed):  %g' %err_x_count['miss'])
       if exists_types[2]:
+        print('Observed MSE x_pos:  %g' %err_x_pos['obs'])   # these aren't reconstructed/imputed
+        print('Missing MSE x_pos:  %g' %err_x_pos['miss'])
+      if exists_types[3]:
         print('Observed MSE x_cat (probs):  %g' %err_x_cat['obs'])   # these aren't reconstructed/imputed
         print('Missing MSE x_cat (probs):  %g' %err_x_cat['miss'])
       print('Observed MSE y:  %g' %err_y['obs'])   # these aren't reconstructed/imputed
@@ -1664,7 +1709,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     #Cs
     xhat0 = np.empty([xhat.shape[0], len(data_types_x_0)])
     mask_x0 = np.empty([mask_x.shape[0], len(data_types_x_0)])
-    i_real=0; i_count=0; i_cat=0; C0=0
+    i_real=0; i_count=0; i_cat=0; i_pos=0; C0=0
     
     # undo normalization (scaling):
     xhat = (xhat*norm_sds_x) + norm_means_x
@@ -1677,9 +1722,14 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         mask_x0[:,i] = mask_x[:,np.where(ids_real)[0][i_real]]
         i_real = i_real+1
       elif data_types_x_0[i]=="count":
-        xhat0[:,i] = xhat[:,np.where(ids_count)[0][i_count]]
+        xhat0[:,i] = np.exp(xhat[:,np.where(ids_count)[0][i_count]])
+        # xhat0[:,i] = xhat[:,np.where(ids_count)[0][i_count]]
         mask_x0[:,i] = mask_x[:,np.where(ids_count)[0][i_count]]
         i_count=i_count+1
+      elif data_types_x_0[i]=="pos":
+        xhat0[:,i] = xhat[:,np.where(ids_pos)[0][i_pos]]
+        mask_x0[:,i] = mask_x[:,np.where(ids_pos)[0][i_pos]]
+        i_pos = i_pos+1
       elif data_types_x_0[i]=="cat":
         # print(int(C0*i_cat))
         # print(int(C0*i_cat+Cs[i_cat]))
@@ -1693,6 +1743,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         # print(mask_x[0:3,idd])
         C0=Cs[i_cat]
         i_cat = i_cat+1
+      
     # raise Exception("TEST")
 
     xhat=xhat0
@@ -1711,7 +1762,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     else: saved_model={'NNs_xm': NNs_xm, 'NN_ym': NN_ym, 'NN_y': NN_y,'encoder':encoder}
     
     saved_model['decoders'] = decoders
-
+    sys.stdout.flush()
+    
     all_params = {}
     if family=="Gaussian": all_params['y'] = {'mean': params_y['mean'], 'scale': params_y['scale']}
     elif family=="Multinomial": all_params['y'] =  {'probs': params_y['probs']}
@@ -1728,6 +1780,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       if exists_types[1]:
         all_params['xm']['count'] = {'mean': params_xm['count']['mean'], 'scale': params_xm['count']['scale']}
       if exists_types[2]:
+        all_params['xm']['pos'] = {'mean': params_xm['pos']['mean'], 'scale': params_xm['pos']['scale']}
+      if exists_types[3]:
         all_params['xm']['cat'] = {}
         for ii in range(0,p_cat):
           all_params['xm']['cat']['probs'] = params_xm['cat'][ii]
@@ -1739,6 +1793,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       all_params['x']['count'] = {'mean': params_x['count']['mean'], 'scale': params_x['count']['scale']}
       # all_params['x']['count'] = {'lambda': loss_fit['params_x']['count']['lambda']}
     if exists_types[2]:
+      all_params['x']['pos'] = {'mean': params_x['pos']['mean'], 'scale': params_x['pos']['scale']}
+    if exists_types[3]:
       all_params['x']['cat'] = {}
       for ii in range(0,p_cat):
         all_params['x']['cat']['probs'] = params_x['cat'][ii]
