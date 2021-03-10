@@ -1,7 +1,7 @@
 processResults = function(prefix="",data.file.name = NULL, mask.file.name=NULL,
                           sim.params = list(N=1e5, P=8, data_types=NA, family="Gaussian", sim_index=1, ratios=c(train=.6,valid=.2,test=.2), mu=0, sd=1, beta=5, C=3),
                           miss.params = list(scheme="UV", mechanism="MNAR", pi=0.5, phi0=5, miss_cols=NULL, ref_cols=NULL),
-                          case=c("x","y","xy"), normalize=F, data_type_x="real", data_type_y = "real"){
+                          case=c("x","y","xy"), normalize=F, data_types_x, data_type_y = "real"){
   library(ggplot2)
   library(grid)
   library(gridExtra)
@@ -44,8 +44,9 @@ processResults = function(prefix="",data.file.name = NULL, mask.file.name=NULL,
   Ys = split(data.frame(Y), g)        # split by $train, $test, and $valid
   Rxs = split(data.frame(mask_x), g)
   Rys = split(data.frame(mask_y), g)
-  norm_means_x=colMeans(Xs$train, na.rm=T); norm_sds_x=apply(Xs$train,2,function(y) sd(y,na.rm=T))
-  norm_mean_y=colMeans(Ys$train, na.rm=T); norm_sd_y=apply(Ys$train,2,function(y) sd(y,na.rm=T))
+  norm_means_x=colMeans(Xs$train, na.rm=T); norm_sds_x=apply(Xs$train,2,function(y) sd(y,na.rm=T))   # normalization already undone in results xhat
+  # norm_mean_y=colMeans(Ys$train, na.rm=T); norm_sd_y=apply(Ys$train,2,function(y) sd(y,na.rm=T))
+  norm_mean_y=0; norm_sd_y=1   # didn't normalize Y
   
   miss_cols = which(colMeans(mask_x)!=1)
   
@@ -90,22 +91,25 @@ processResults = function(prefix="",data.file.name = NULL, mask.file.name=NULL,
   ###### look at E[Y|X] in test data ######
   #########################################
   
-  ## prediction of Y in test set: E[Y|X] - Ytrue
+  ## prediction of Y in test set: E[Y|X] - Ytrue (LATEST ITERATION: Y is not standardized)
   ## WITH MISSINGNESS IN TEST SET
-  if(normalize){
-    mu_y = colMeans(matrix(res$all_params$y$mean*norm_sd_y + norm_mean_y,nrow=niws))  # average over the multiple samples of Xm --> Y'1
-  }else{
-    if(family %in% c("Gaussian","Poisson")){ mu_y = rowMeans(matrix(res$all_params$y$mean,ncol=niws))  # average over the multiple samples of Xm --> Y'1
+  # if(normalize){
+  #   # mu_y = colMeans(matrix(res$all_params$y$mean*norm_sd_y + norm_mean_y,nrow=niws))  # average over the multiple samples of Xm --> Y'1
+  #   mu_y = res$all_params$y$mean*norm_sd_y + norm_mean_y  # average over the multiple samples of Xm --> Y'1
+  # }else{
+    # if(family %in% c("Gaussian","Poisson")){ mu_y = rowMeans(matrix(res$all_params$y$mean,ncol=niws))  # average over the multiple samples of Xm --> Y'1
+    if(family %in% c("Gaussian","Poisson")){ mu_y = res$all_params$y$mean  # average over the multiple samples of Xm --> Y'1
     } else if(family=="Multinomial"){
       ## average probs, then choose max prob class
       # probs_y = apply(res$all_params$y$probs, 2, function(x){rowMeans(matrix(x,ncol=niws))})
       # mu_y = apply(probs_y,1,which.max)
 
       ## choose max classes first then take consensus
-      cls_y = apply(res$all_params$y$probs, 1,which.max)
-      mu_y = apply(matrix(cls_y, ncol=niws), 1, function(x){ as.numeric(names(which.max(table(x)))) })
+      # cls_y = apply(res$all_params$y$probs, 1,which.max)
+      # mu_y = apply(matrix(cls_y, ncol=niws), 1, function(x){ as.numeric(names(which.max(table(x)))) })
+      mu_y = apply(res$all_params$y$probs, 1,which.max)
     }
-  }
+  # }
   
   ## WITHOUT MISSINGNESS IN TEST SET
   # mu_y = as.matrix(Xs$test) %*% as.matrix(as.numeric(w),ncol=1)
@@ -292,17 +296,16 @@ processResults = function(prefix="",data.file.name = NULL, mask.file.name=NULL,
   ###########################################
   ###### look at imputation in missing ######
   ###########################################
-  xhat = res$xhat
+  xhat = res$xhat; yhat=res$yhat
   # xfull = res$xfull
-  for(i in 1:ncol(xhat)){
-    if(normalize){
-      xhat[,i] = res$xhat[,i] * norm_sds_x[i] + norm_means_x[i]
-    }else{
-      xhat[,i] = res$xhat[,i]
-    }
-    # xfull[,i] = res$xfull[,i] * norm_sds_x[i] + norm_means_x[i]
-  }
-  if(normalize){ yhat = res$yhat* norm_sd_y + norm_mean_y } else{ yhat = res$yhat }
+  # for(i in 1:ncol(xhat)){
+  #   if(normalize){
+  #     xhat[,i] = res$xhat[,i] * norm_sds_x[i] + norm_means_x[i]
+  #   }else{
+  #   }
+  #   # xfull[,i] = res$xfull[,i] * norm_sds_x[i] + norm_means_x[i]
+  # }
+  # if(normalize){ yhat = res$yhat* norm_sd_y + norm_mean_y } else{ yhat = res$yhat }
   if(grepl("x",case)){
     if(all(Rxs$test==1)){stop("case states missing x, but no missing x")}
     L1s_x = abs(Xs$test-xhat)[Rxs$test==0]
@@ -454,15 +457,17 @@ processResults = function(prefix="",data.file.name = NULL, mask.file.name=NULL,
 # mu=0; sd=1; beta=5; pi=0.5
 # mu=1; sd=2; beta=5; pi=0.5
 mu=5; sd=5; beta=5; pi=0.5
-prefix=sprintf("Xmean%dsd%d_beta%d_pi%d/",mu,sd,beta,pi*100)
 # prefix=sprintf("Xmean%dsd%d_beta%d_pi%d_corr0.2/",mu,sd,beta,pi*100)
 # N=1e5; P=8; phi0=100
 N=1e5; P=8; phi0=5
 data.file.name = NULL; mask.file.name=NULL
-case="x"; normalize=F
-data_type_x="real"; data_type_y = "real"   # real, cat, cts
-# data_type_x="real"; data_type_y = "cat"; C=3   # real, cat, cts
+case="x"; normalize=T
+data_type_y = "real"   # real, cat, cts
 
+data_types_x = rep("real",8)
+data_type_x = if(all(data_types_x==data_types_x[1])){data_types_x[1]}else{"mixed"}
+P_real=sum(data_types_x=="real"); P_count=sum(data_types_x=="count"); P_cat=sum(data_types_x=="cat")
+prefix=sprintf("Xr%dct%dcat%d_beta%d_pi%d/",P_real,P_count,P_cat,beta,pi*100)
 sim_indexes = 1; mechanisms=c("MNAR")
 
 for(s in 1:length(sim_indexes)){for(m in 1:length(mechanisms)){
@@ -478,6 +483,6 @@ for(s in 1:length(sim_indexes)){for(m in 1:length(mechanisms)){
                  sim.params = sim.params,
                  miss.params = miss.params,
                  case=case, normalize=normalize,
-                 data_type_x=data_type_x, data_type_y = data_type_y)
+                 data_types_x=data_types_x, data_type_y = data_type_y)
   
 }}
