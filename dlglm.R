@@ -11,21 +11,21 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
   
   # Transform count data (log) and cat data (subtract by min)
   data_types_x_0 = data_types_x
-  X[,data_types_x=="count"] = log(X[,data_types_x=="count"]+0.001)
+  # X[,data_types_x=="count"] = log(X[,data_types_x=="count"]+0.001)
   if(sum(data_types_x=="cat") == 0){
     X_aug = X
     mask_x_aug = mask_x
     Cs = np$empty(shape=c(0L,0L))
   } else{
     # reorder to real&count covariates first, then augment cat dummy vars
-    X_aug = X[,data_types_x %in% c("real","count")]
-    mask_x_aug = mask_x[,data_types_x %in% c("real","count")]
-    covars_r_x_aug = covars_r_x[data_types_x %in% c("real","count")]
+    X_aug = X[,!(data_types_x %in% c("cat"))]
+    mask_x_aug = mask_x[,!(data_types_x %in% c("cat"))]
+    covars_r_x_aug = covars_r_x[!(data_types_x %in% c("cat"))]
     
     ## onehot encode categorical variables
-    X_cats = X[,data_types_x=="cat"]
+    # X_cats = X[,data_types_x=="cat"]
     Cs = rep(0,sum(data_types_x=="cat"))
-    X_cats_onehot = matrix(nrow=N,ncol=0)
+    # X_cats_onehot = matrix(nrow=N,ncol=0)
     cat_ids = which(data_types_x=="cat")
     for(i in 1:length(cat_ids)){
       X_cat = as.numeric(as.factor(X[,cat_ids[i]]))-1
@@ -34,7 +34,7 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
       for(ii in 1:Cs[i]){
         X_cat_onehot[,ii] = (X_cat==ii-1)^2
       }
-      X_cats_onehot = cbind(X_cats_onehot, X_cat_onehot)
+      # X_cats_onehot = cbind(X_cats_onehot, X_cat_onehot)
       X_aug = cbind(X_aug, X_cat_onehot)
       mask_x_aug = cbind(mask_x_aug, matrix(mask_x[,cat_ids[i]], nrow=N, ncol=Cs[i]))
       covars_r_x_aug = c(covars_r_x_aug, rep(covars_r_x[data_types_x == "cat"][i], Cs[i]) )
@@ -42,7 +42,7 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
     
     
     ## column bind real/count and one-hot encoded cat vars
-    data_types_x = c( data_types_x[data_types_x %in% c("real","count")], rep("cat",sum(Cs)) )
+    data_types_x = c( data_types_x[!(data_types_x %in% c("cat"))], rep("cat",sum(Cs)) )
     covars_r_x = covars_r_x_aug
   }
   
@@ -57,9 +57,9 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
   Rys = split(data.frame(mask_y), g)
   
   # dim_z --> as.integer() does floor()
-  sigma="elu"; hs=c(64L,128L); bss=c(200L); lrs=c(0.01,0.001); impute_bs = bss[1]; arch="IWAE"
-  # sigma="elu"; hs=c(64L,128L); bss=c(1000L); lrs=c(0.01); impute_bs = bss[1]; arch="IWAE"   # TEST. COMMENT OUT AND REPLACE W ABOVE LATER
-  niws=5L; n_epochss=2002L; n_hidden_layers = c(2L, 1L)
+  # sigma="elu"; hs=c(64L,128L); bss=c(200L); lrs=c(0.001,0.01); impute_bs = bss[1]; arch="IWAE"
+  sigma="elu"; hs=c(64L,128L); bss=c(200L); lrs=c(0.01); impute_bs = bss[1]; arch="IWAE"   # TEST. COMMENT OUT AND REPLACE W ABOVE LATER
+  niws=5L; n_epochss=2002L; n_hidden_layers = c(1L, 2L)
   # niws=5L; n_epochss=2002L; n_hidden_layers = c(5L)
   
   dim_zs = c(as.integer(floor(ncol(X)/2)), as.integer(floor(ncol(X)/4)))
@@ -72,7 +72,7 @@ tune_hyperparams = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covar
   if(normalize){
     norm_means_x=colMeans(Xs$train, na.rm=T); norm_sds_x=apply(Xs$train,2,function(y) sd(y,na.rm=T))
     norm_mean_y=0; norm_sd_y=1
-    # norm_means_x[data_types_x=="cat"] = 0; norm_sds_x[data_types_x=="cat"] = 1
+    norm_means_x[data_types_x=="cat"] = 0; norm_sds_x[data_types_x=="cat"] = 1
     # if(family=="Multinomial"){
     #   norm_mean_y=0; norm_sd_y=1
     # } else{

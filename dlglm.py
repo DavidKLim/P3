@@ -395,10 +395,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
           for ii in range(0,p_cat):
             if ii==0: C0=0; C1=int(Cs[ii])
             else: C0=C1; C1=C0 + int(Cs[ii])
-            # print(qxmgivenxors['cat'][ii].rsample([niw]))   # niw, bs, p
-            # xm_flat[:,where_ids_cat[0][ii]] = qxmgivenxors['cat'][ii].rsample([niw]).reshape([niw*batch_size,-1])
-            # xm_flat_cat.append( qxmgivenxors['cat'][ii].rsample([niw]).reshape([niw*batch_size,-1]) )
             xm_flat[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)] = qxmgivenxors['cat'][ii].rsample([niw]).reshape([niw*batch_size,-1])
+            # xm_flat[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)] = torch.Tensor.repeat(outs_NN_xm['cat'][ii], [niw,1])
 
         if torch.sum(torch.isnan(xm_flat))>0:
           print("minibatched data:")
@@ -625,8 +623,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
             if ii==0: C0=0; C1=int(Cs[ii])
             else: C0=C1; C1=C0 + int(Cs[ii])
             
-            if ii==0: logqxmgivenxor_cat = torch.sum(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M*batch_size,-1])  *  (1-tiled_tiledmask_x[:,(p_real + p_count + p_pos + C0)]),1).reshape([-1,batch_size])
-            else: logqxmgivenxor_cat = logqxmgivenxor_cat + torch.sum(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M*batch_size,-1])  *  (1-tiled_tiledmask_x[:,(p_real + p_count + p_pos + C0)]),1).reshape([-1,batch_size])
+            if ii==0: logqxmgivenxor_cat = torch.sum(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M*batch_size,-1])  *  (1-tiledmask_x[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)]),1).reshape([-1,batch_size])
+            else: logqxmgivenxor_cat = logqxmgivenxor_cat + torch.sum(qxmgivenxors['cat'][ii].log_prob( xincluded[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)].reshape([M,batch_size,int(Cs[ii])]) ).reshape([M*batch_size,-1])  *  (1-tiledmask_x[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)]),1).reshape([-1,batch_size])
             # print("logqxmgivenxor_cat:")
             # print(logqxmgivenxor_cat)
             # print(logqxmgivenxor_cat.shape)
@@ -1709,6 +1707,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     #Cs
     xhat0 = np.empty([xhat.shape[0], len(data_types_x_0)])
     mask_x0 = np.empty([mask_x.shape[0], len(data_types_x_0)])
+    covars_r_x0 = np.empty([len(data_types_x_0)])
     i_real=0; i_count=0; i_cat=0; i_pos=0; C0=0
     
     # undo normalization (scaling):
@@ -1720,15 +1719,18 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       if data_types_x_0[i]=="real":
         xhat0[:,i] = xhat[:,np.where(ids_real)[0][i_real]]
         mask_x0[:,i] = mask_x[:,np.where(ids_real)[0][i_real]]
+        covars_r_x0 = covars_r_x[np.where(ids_real)[0][i_real]]
         i_real = i_real+1
       elif data_types_x_0[i]=="count":
-        xhat0[:,i] = np.exp(xhat[:,np.where(ids_count)[0][i_count]])
-        # xhat0[:,i] = xhat[:,np.where(ids_count)[0][i_count]]
+        # xhat0[:,i] = np.exp(xhat[:,np.where(ids_count)[0][i_count]])
+        xhat0[:,i] = xhat[:,np.where(ids_count)[0][i_count]]
         mask_x0[:,i] = mask_x[:,np.where(ids_count)[0][i_count]]
+        covars_r_x0 = covars_r_x[np.where(ids_count)[0][i_count]]
         i_count=i_count+1
       elif data_types_x_0[i]=="pos":
         xhat0[:,i] = xhat[:,np.where(ids_pos)[0][i_pos]]
         mask_x0[:,i] = mask_x[:,np.where(ids_pos)[0][i_pos]]
+        covars_r_x0 = covars_r_x[np.where(ids_pos)[0][i_pos]]
         i_pos = i_pos+1
       elif data_types_x_0[i]=="cat":
         # print(int(C0*i_cat))
@@ -1741,6 +1743,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         mask_x0[:,i] = mask_x[:,idd[0]]   # can be max or min or anything --> should still be the same value: 0 or 1
         # print(mask_x0[0:3,i])
         # print(mask_x[0:3,idd])
+        covars_r_x0[i] = covars_r_x[idd[0]]
         C0=Cs[i_cat]
         i_cat = i_cat+1
       
@@ -1749,6 +1752,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     xhat=xhat0
     mask_x=mask_x0
     data_types_x=data_types_x_0
+    covars_r_x=covars_r_x0
     
     ### what if y was count? yhat?
     
