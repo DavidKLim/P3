@@ -4,15 +4,16 @@ N=1e5; P=8
 # data_types_x = c( rep("real",3), rep("cat",2), rep("count",3) )
 # data_types_x = c( rep("real",4), rep("count",4) )
 data_types_x = c( rep("real",4), rep("cat",4) )
+# data_types_x = rep("real",P)
 family="Gaussian"; link="identity"
 # family="Multinomial"; link="mlogit"
 # mu=0; sd=1; beta=5
 # mu=1; sd=2; beta=5
-mu=5; sd=5; beta=5
+mu=0; sd=1; beta=0.5
 # mu=5; sd=1; beta=5
-case = "x"; pi=0.5; phi0=100
-# case = "x"; pi=0.5; phi0=5
-learn_r = T; covars_r_x = rep(1,P); covars_r_y = 1  # include all
+# case = "x"; pi=0.5; phi0=100
+case = "x"; pi=0.5; phi0=5
+learn_r = T; covars_r_x = rep(1L,P); covars_r_y = 1L  # include all
 # Ignorable=F; normalize=F
 Ignorable=F; normalize=T
 mechanisms="MNAR"; sim_indexes = 1
@@ -20,7 +21,7 @@ mechanisms="MNAR"; sim_indexes = 1
 data_type_x_pref = if(all(data_types_x == data_types_x[1])){ data_types_x[1] } else{ "mixed" }
 data_type_y_pref = if(family=="Gaussian"){"real"}else if(family=="Multinomial"){"cat"}else if(family=="Poisson"){"cts"}
 
-prefix = sprintf("Xr%dct%dcat%d_beta%d_pi%d/",
+prefix = sprintf("Xr%dct%dcat%d_beta%f_pi%d/",
                  sum(data_types_x=="real"), sum(data_types_x=="count"), sum(data_types_x=="cat"),
                  beta, pi*100)
 dataset = sprintf("SIM_N%d_P%d", N, P)
