@@ -169,6 +169,9 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
   print("data_types_x_0"); print(data_types_x_0)
   torch$cuda$empty_cache()
   
+  full_obs_ids = np$array(colSums(mask_x_aug==0)==0)   ## columns missing in train may be diff from in valid/test
+  miss_ids = np$array(colSums(mask_x_aug==0)>0)
+  
   for(j in 1:length(bss)){for(k in 1:length(lrs)){
     for(m in 1:length(niws)){for(oo in 1:length(dim_zs)){for(mm in 1:length(n_epochss)){
       for(nn in 1:length(n_hidden_layers)){for(ny in 1:length(n_hidden_layers_y)){for(nr in 1:length(n_hidden_layers_r)){
@@ -201,7 +204,8 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
                         pre_impute_value, n_hidden_layers[nn], n_hidden_layers_y[ny], n_hidden_layers_r[nr], 
                         h0[i], h_y0[ii], h_r0[iii], phi0, phi, 
                         1, NULL, sigma, bss[j], n_epochss[mm],
-                        lrs[k], niws[m], 1L, dim_zs[oo], dir_name=dir_name, trace=trace, save_imps=F, test_temp=0.5, L1_weight=L1_weights[pp], init_r=init_r)   
+                        lrs[k], niws[m], 1L, dim_zs[oo], dir_name=dir_name, trace=trace, save_imps=F, test_temp=0.5, L1_weight=L1_weights[pp], init_r=init_r,
+                        full_obs_ids=full_obs_ids, miss_ids=miss_ids)   
       res_valid = dlglm(np$array(Xs$valid), np$array(Rxs$valid), np$array(Ys$valid), np$array(Rys$valid),
                         np$array(covars_r_x), np$array(covars_r_y),
                         np$array(norm_means_x), np$array(norm_sds_x), np$array(norm_mean_y), np$array(norm_sd_y),
@@ -212,7 +216,8 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
                         pre_impute_value, n_hidden_layers[nn], n_hidden_layers_y[ny], n_hidden_layers_r[nr], 
                         h0[i], h_y0[ii], h_r0[iii], phi0, phi, 
                         0, res_train$saved_model, sigma, bss[j], 2L,
-                        lrs[k], niws[m], 1L, dim_zs[oo], dir_name=dir_name, trace=trace, save_imps=F, test_temp=res_train$'train_params'$'temp', L1_weight=res_train$'train_params'$'L1_weight', init_r=init_r)  # no early stopping in validation
+                        lrs[k], niws[m], 1L, dim_zs[oo], dir_name=dir_name, trace=trace, save_imps=F, test_temp=res_train$'train_params'$'temp', L1_weight=res_train$'train_params'$'L1_weight', init_r=init_r,
+                        full_obs_ids=full_obs_ids, miss_ids=miss_ids)  # no early stopping in validation
       
       val_LB = res_valid$'LB'    # res_train$'val_LB'
       
@@ -273,6 +278,7 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
   
   test_bs = 100L
   # test_bs = 500L
+  
   res_test = dlglm(np$array(Xs$test), np$array(Rxs$test), np$array(Ys$test), np$array(Rys$test),
                    np$array(covars_r_x), np$array(covars_r_y),
                    np$array(norm_means_x), np$array(norm_sds_x), np$array(norm_mean_y), np$array(norm_sd_y),
@@ -282,7 +288,8 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
                    train_params$pre_impute_value, train_params$n_hidden_layers, train_params$n_hidden_layers_y, train_params$n_hidden_layers_r, 
                    train_params$h1, train_params$h2, train_params$h3, phi0, phi, 
                    0, saved_model, sigma, test_bs, 2L,
-                   train_params$lr, n_imps, 1L, train_params$dim_z, dir_name=dir_name, trace=trace, save_imps=T, test_temp=train_params$'temp', L1_weight=train_params$'L1_weight', init_r=init_r)
+                   train_params$lr, n_imps, 1L, train_params$dim_z, dir_name=dir_name, trace=trace, save_imps=T, test_temp=train_params$'temp', L1_weight=train_params$'L1_weight', init_r=init_r,
+                   full_obs_ids=full_obs_ids, miss_ids=miss_ids)
   
   fixed.params = list(dir_name=dir_name, covars_r_x=covars_r_x, covars_r_y=covars_r_y, learn_r=learn_r, Ignorable=Ignorable, family=family, link=link, init_r=init_r)
   

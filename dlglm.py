@@ -218,10 +218,10 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   elif (sigma=="tanh"): act_fun=torch.nn.Tanh()
   elif (sigma=="sigmoid"): act_fun=torch.nn.Sigmoid()
 
-  if train==1:
-    ## at test time, full_obs_ids may be different than in training time..
-    full_obs_ids = np.sum(Rx==0,axis=0)==0    # columns that are fully observed need not have missingness modelled
-    miss_ids = np.sum(Rx==0,axis=0)>0
+  # if train==1:  #### THIS IS NOW DEFINED IN dlglm.R wrapper
+  #   ## at test time, full_obs_ids may be different than in training time..
+  #   full_obs_ids = np.sum(Rx==0,axis=0)==0    # columns that are fully observed need not have missingness modelled
+  #   miss_ids = np.sum(Rx==0,axis=0)>0
     
   
   p_miss = np.sum(~full_obs_ids)
