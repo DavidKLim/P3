@@ -52,14 +52,14 @@ simulateData = function(N, D, P, data_types, family, seed, NL_x, NL_y,
     
     # N=100000; P=25; seed=9*sim_index
     set.seed(seed)
-    sd1 = 1
+    H=64
     
-
     ## skew-normal X2
-    Z1 = MASS::mvrnorm(N, rep(0,D), Sigma=diag(D))
-    Z2 = MASS::mvrnorm(N, rep(0,D), Sigma=diag(D))
+    # Z1 = MASS::mvrnorm(N, rep(0,D), Sigma=diag(D))
+    # Z2 = MASS::mvrnorm(N, rep(0,D), Sigma=diag(D))
+    Z = MASS::mvrnorm(N, rep(0,D), Sigma=diag(D))
     
-    generate_nonlinear_data = function(Z,type=c("real","cat","count","pos"), P_type, C=NULL, seed){
+    generate_nonlinear_data = function(Z,H,type=c("real","cat","count","pos"), P_type, C=NULL){
       ### tests:
       # type="real"; P_type=5; C=NULL
       # type="cat"; P_type=5; C=3
@@ -68,15 +68,35 @@ simulateData = function(N, D, P, data_types, family, seed, NL_x, NL_y,
       ############
       N = nrow(Z); D = ncol(Z)
       if(type %in% c("real", "count","pos")){P0 = P_type} else if(type =="cat"){ P0 = C*P_type}
-      W1 = matrix(runif(D*floor(P0/2),0,1),nrow=D,ncol=floor(P0/2)) # weights
-      W2 = matrix(runif(D*(P0-floor(P0/2)),0,1),nrow=D,ncol=P0-floor(P0/2)) # weights      # B = matrix(rnorm(N*P,0,0.25),nrow=N,ncol=P_type)
+      # W1 = matrix(runif(D*floor(P0/2),0,1),nrow=D,ncol=floor(P0/2)) # weights
+      # W2 = matrix(runif(D*(P0-floor(P0/2)),0,1),nrow=D,ncol=P0-floor(P0/2)) # weights      # B = matrix(rnorm(N*P,0,0.25),nrow=N,ncol=P_type)
       
-      # eta = Z %*% W + B
-      eta1 = 10*qrnn::sigmoid(Z2%*%W1)
-      eta2 = 5*(cos(Z1%*%W2) + qrnn::sigmoid(Z2%*%W2))
+      
+      W1 = if(type=="cat"){
+        matrix(3*sample(c(-1,1),size=D*H,replace=T),nrow=D,ncol=H)
+      }else{
+        matrix(rnorm(D*H,0,0.5),nrow=D,ncol=H)
+      }
+      W2 = if(type=="cat"){
+        matrix(3*sample(c(-1,1),size=H*P0,replace=T),nrow=H,ncol=P0)
+      }else{
+        matrix(rnorm(H*P0,0,0.5),nrow=H,ncol=P0)
+      }
+      
+      B = matrix(rnorm(N*P0,0,1),nrow=N,ncol=P0)
+      # B1 = matrix(rnorm(N*P0,0,1),nrow=N,ncol=H)
+      # B2 = matrix(rnorm(N*P0,0,1),nrow=N,ncol=P0)
+      # B0 = 0 #location shift?
+      B0 = 10
+      
+      # eta = qrnn::elu(Z %*% W1 + B1) %*% W2 + B2
+      eta = qrnn::elu(Z %*% W1) %*% W2 + B
+      eta = apply(eta,2,function(x){(x-mean(x))/sd(x)})  # pre-normalize to mean 0
+      eta = eta + B0  # add location shift
+      
+      # eta = Z %*% W
       if(type=="real"){
-        X1 = matrix(rnorm(N*floor(P_type/2), eta1, sd = 0.25), nrow=N, ncol=floor(P_type/2))
-        X2 = matrix(rnorm(N*(P_type-ncol(X1)), eta2, sd = 0.25), nrow=N, ncol=P_type-ncol(X1))
+        X = eta  # if B matrix (noise) is applied to eta
       }else if(type=="cat"){
         X = matrix(nrow=N,ncol=0)
         for(j in 1:P_type){
@@ -90,6 +110,8 @@ simulateData = function(N, D, P, data_types, family, seed, NL_x, NL_y,
       }else if(type=="pos"){
         X = matrix(rlnorm(N*P_type, eta, 0.1), N, P_type) # log-sd changed to have range of about 0 - 80
       }
+      # return(list(X=X,W=list(W1=W1,W2=W2),B=list(B0=B0,B1=B1,B2=B2)))
+      return(list(X=X,W=list(W1=W1,W2=W2),B=B))
       
     }
     
@@ -101,10 +123,22 @@ simulateData = function(N, D, P, data_types, family, seed, NL_x, NL_y,
     # 
     # X=cbind(X1,X2)
     
-    if(P_real>0){ X[,data_types=="real"] = generate_nonlinear_data(Z=Z, type="real", P_type=P_real, C=NULL, seed=seed) }
-    if(P_cat>0){ X[,data_types=="cat"] = generate_nonlinear_data(Z=Z, type="cat", P_type=P_cat, C=NULL, seed=seed) }
-    if(P_count>0){ X[,data_types=="count"] = generate_nonlinear_data(Z=Z, type="count", P_type=P_count, C=NULL, seed=seed) }
-    if(P_pos>0){ X[,data_types=="pos"] = generate_nonlinear_data(Z=Z, type="pos", P_type=P_pos, C=NULL, seed=seed) }
+    if(P_real>0){ 
+      fit = generate_nonlinear_data(Z=Z, H=H, type="real", P_type=P_real, C=NULL)
+      X[,data_types=="real"] = fit$X
+    }
+    if(P_cat>0){
+      fit = generate_nonlinear_data(Z=Z, H=H, type="cat", P_type=P_cat, C=NULL)
+      X[,data_types=="cat"] = fit$X
+    }
+    if(P_count>0){
+      fit = generate_nonlinear_data(Z=Z, H=H, type="count", P_type=P_count, C=NULL)
+      X[,data_types=="count"] = fit$X
+    }
+    if(P_pos>0){
+      fit = generate_nonlinear_data(Z=Z, H=H, type="pos", P_type=P_pos, C=NULL)
+      X[,data_types=="pos"] = fit$X
+    }
     
   }else{
     set.seed(seed)
@@ -113,7 +147,7 @@ simulateData = function(N, D, P, data_types, family, seed, NL_x, NL_y,
       Z[,d]=rnorm(N,mean=0,sd=1)
     }
     
-    generate_linear_data = function(Z,type=c("real","cat","count","pos"), P_type, C=NULL, seed){
+    generate_linear_data = function(Z,type=c("real","cat","count","pos"), P_type, C=NULL){
       # ### tests:
       # type="real"; P_type=5; C=NULL
       # type="cat"; P_type=1; C=3
@@ -142,7 +176,7 @@ simulateData = function(N, D, P, data_types, family, seed, NL_x, NL_y,
       # B = matrix(rnorm(N*P0,0,0.25),nrow=N,ncol=P0)
       B = matrix(rnorm(N*P0,0,1),nrow=N,ncol=P0)
       # B0 = 0 #location shift?
-      B0 = 2
+      B0 = 2 ### maybe change this shift to 10
       
       eta = Z %*% W + B
       eta = apply(eta,2,function(x){(x-mean(x))/sd(x)})  # pre-normalize
@@ -195,20 +229,20 @@ simulateData = function(N, D, P, data_types, family, seed, NL_x, NL_y,
       }else if(type=="pos"){
         X = matrix(rlnorm(N*P_type, eta, 0.1), N, P_type) # log-sd changed to have range of about 0 - 80
       }
-      return(list(X=X,W=W,B=B))
+      return(list(X=X,W=W,B=list(B0=B0,B=B)))
     }
     
     if(P_real>0){
-      fit = generate_linear_data(Z=Z, type="real", P_type=P_real, C=NULL, seed=seed)
+      fit = generate_linear_data(Z=Z, type="real", P_type=P_real, C=NULL)
       X[,data_types=="real"] = fit$X; Ws$"real" = fit$W; Bs$"real" = fit$B }
     if(P_cat>0){
-      fit = generate_linear_data(Z=Z, type="cat", P_type=P_cat, C=C, seed=seed)
+      fit = generate_linear_data(Z=Z, type="cat", P_type=P_cat, C=C)
       X[,data_types=="cat"] = fit$X; Ws$"cat" = fit$W; Bs$"cat" = fit$B }
     if(P_count>0){ 
-      fit = generate_linear_data(Z=Z, type="count", P_type=P_count, C=NULL, seed=seed)
+      fit = generate_linear_data(Z=Z, type="count", P_type=P_count, C=NULL)
       X[,data_types=="count"] = fit$X; Ws$"count" = fit$W; Bs$"count" = fit$B}
     if(P_pos>0){ 
-      fit = generate_linear_data(Z=Z, type="pos", P_type=P_pos, C=NULL, seed=seed)
+      fit = generate_linear_data(Z=Z, type="pos", P_type=P_pos, C=NULL)
       X[,data_types=="pos"] = fit$X; Ws$"pos" = fit$W; Bs$"pos" = fit$B}
     
   }
@@ -226,6 +260,13 @@ simulateData = function(N, D, P, data_types, family, seed, NL_x, NL_y,
     betas = cbind(beta1, rbind(betas_real, betas_cat, betas_count))
     epsilon = matrix(rnorm(N*(Cy-1), 0, 0.1), nrow=N,ncol=Cy)
     
+    
+    betas2_real = matrix(sample(c(-1*beta, beta), P_real*(Cy-1), replace=T),nrow=P_real,ncol=Cy-1)
+    betas2_count = matrix(sample(c(-1*beta, beta), P_count*(Cy-1), replace=T),nrow=P_count,ncol=Cy-1)      # effect is twice the magnitude of the effect of continuous values?
+    betas2_cat = matrix(sample(c(-2*beta, 2*beta), P_cat*(Cy-1), replace=T), nrow=P_cat, ncol=Cy-1)
+    
+    betas2 = cbind(beta1, rbind(betas2_real, betas2_cat, betas2_count))
+    
   } else{ 
     betas_real = sample(c(-1*beta, beta), P_real, replace=T)
     # (most proper:  for cat vars: diff effect per level. not doing this right now --> same effect from 1 --> 2, 2 --> 3, etc.)
@@ -236,12 +277,39 @@ simulateData = function(N, D, P, data_types, family, seed, NL_x, NL_y,
     betas = c(betas_real, betas_cat, betas_count)
     epsilon = rnorm(N, 0, 0.1)
     
+    betas2_real = sample(c(-4*beta, beta), P_real, replace=T)
+    betas2_count = sample(c(-4*beta, beta), P_count, replace=T)      # effect is twice the magnitude of the effect of continuous values?
+    betas2_cat = sample(c(-8*beta, 8*beta), P_cat, replace=T)
+    betas2 = c(betas2_real, betas2_cat, betas2_count)
   } # mean(cts) = 5, mean(cat) = 2, mean(count) = exp(8) ~ 2981
   
   # epsilon = 0
   if(NL_y){
-    
+    ##### covariates of Y are X^2
+    if(family=="Gaussian"){
+      # Simulate y from X --> y = Xb + e
+      beta0s = 0
+      # eta = beta0s + X^2 %*% betas + epsilon
+      eta = beta0s + X^2 %*% betas + log(X + abs(min(X)) + 0.001) %*% betas2 + epsilon
+      Y = eta
+      prs = NA
+    } else if(family=="Multinomial"){
+      beta0s = 0
+      # eta = beta0s + X^2 %*% betas + epsilon
+      eta = beta0s + X^2 %*% betas + log(X + abs(min(X)) + 0.001) %*% betas2 + epsilon
+      prs = t(apply(eta,1,softmax))
+      Y = apply(prs, 1, function(x) which.max(rmultinom(1, 1, x)))  # categorical distribution
+      
+      # Y = rbinom(N,1,prs)  # for binary outcome only
+    } else if(family=="Poisson"){
+      beta0s = 8
+      # eta = beta0s + X^2 %*% betas + epsilon
+      eta = beta0s + X^2 %*% betas + log(X + abs(min(X)) + 0.001) %*% betas2 + epsilon
+      Y = round(exp(eta),0)   # log(Y) = eta. Round Y to integer (to simulate count)
+      prs = NA
+    }
   }else{
+    ##### covariates for Y are X
     # family="Gaussian" --> Gaussian data for Y
     if(family=="Gaussian"){
       # Simulate y from X --> y = Xb + e
@@ -251,17 +319,35 @@ simulateData = function(N, D, P, data_types, family, seed, NL_x, NL_y,
       Y = eta
       prs = NA
     } else if(family=="Multinomial"){
-      beta0s = 0
-      eta = beta0s + X %*% betas + epsilon
-      # betas = matrix(sample(c(-1*beta,beta), C*P, replace=T),nrow=C,ncol=P)    # defined together in mixed data types
-      # prs = exp(matrix(beta0s,nrow=N,ncol=C,byrow=T) + X %*% betas)
-      prs = t(apply(eta,1,softmax))
-      # prs = exp(beta0s + X %*% betas + epsilon)
-      # prs = prs/rowSums(prs)
-      # Y = apply(prs, 1, sample, x=c(1:Cy), size=1, replace=F)
-      Y = apply(prs, 1, function(x) which.max(rmultinom(1, 1, x)))  # categorical distribution
       
-      # Y = rbinom(N,1,prs)  # for binary outcome only
+      ### I THINK THIS WORKS FOR LOGISTIC REGRESSION, NOT FOR MULTINOMIAL
+      find_int = function(p,betas) {
+        # Define a path through parameter space
+        f = function(t){
+          sapply(t, function(y) mean(1 / (1 + exp(-y -as.matrix(X) %*% betas))))
+        }
+        alpha <- uniroot(function(t) f(t) - p, c(-1e6, 1e6), tol = .Machine$double.eps^0.5)$root
+        return(alpha)
+      }
+      beta0s <- sapply(c(0.5), function(y)find_int(y,betas[,2]))
+      
+      eta = beta0s + X %*% betas + epsilon
+      
+      inv_logit = function(x){
+        return(1/(1+exp(-x)))
+      }
+      prs = inv_logit(eta[,2])
+      Y = rbinom(N, 1, prs)  # for binary outcome only
+      ## transform prs into what it should have been (reference: 1st class)
+      prs0 = cbind(1-prs, prs)
+      prs = prs0
+      
+      #### MULTINOMIAL. NEED TO FIX beta0s TO HAVE CLASSES ~ N/C expected per class (see above for LR). NEED TO CHANGE EVENTUALLY.
+      # beta0s = 0     # makes class too unbalanced...
+      # eta = beta0s + X %*% betas + epsilon
+      # prs = t(apply(eta,1,softmax))
+      # Y = apply(prs, 1, function(x) which.max(rmultinom(1, 1, x)))  # categorical distribution
+      
     } else if(family=="Poisson"){
       beta0s = 8
       eta = beta0s + X %*% betas + epsilon
@@ -269,21 +355,21 @@ simulateData = function(N, D, P, data_types, family, seed, NL_x, NL_y,
       Y = round(exp(eta),0)   # log(Y) = eta. Round Y to integer (to simulate count)
       prs = NA
     }
-    Y = matrix(Y,ncol=1)
   }
+  Y = matrix(Y,ncol=1)
   
   # hist(Y)
   
   # X[,data_types=="count"] = exp(X[,data_types=="count"])    # undo log transf of X
 
   data = list(X=X, Y=Y)
-  params = list(beta0s=beta0s, betas=betas, beta=beta, prs = prs, Ws=Ws, Bs=Bs)
+  params = list(beta0s=beta0s, betas=betas, betas2=betas2, beta=beta, prs = prs, Ws=Ws, Bs=Bs)  # betas2 only used as a second covariate in NL_y (experimental)
   
   return(list(data=data, params=params))
 }
 
 simulateMask = function(data, scheme, mechanism, NL_r, pi, phis, miss_cols, ref_cols, seed){
-  
+
   # mechanism of missingness
   # 1 - pi: % of missingness
   # miss_cols: columns to induce missingness on
@@ -421,7 +507,7 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
     if(is.null(miss.params$miss_cols) & is.null(miss.params$ref_cols)){
       # miss_cols = sample(1:P, floor(P/2), F); ref_cols = c(1:P)[-miss_cols]
       miss_pct_features = miss.params$miss_pct_features
-      miss_cols = sample(1:P, ceiling(P*miss_pct_features/100), F)
+      miss_cols = sample(1:P, floor(P*miss_pct_features/100), F)
       ref_cols = c(1:P)[-miss_cols]
     }else if(!is.null(miss.params$miss_cols) & !is.null(miss.params$ref_cols)){
       miss_cols = miss.params$miss_cols; ref_cols = miss.params$ref_cols
@@ -442,6 +528,8 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
       miss_cols0=c(miss_cols,  ncol(data))  # add Y to the columns where missingness is imposed
       ref_cols0 = ref_cols
     }
+    print(miss.params$scheme); print(miss.params$mechanism); print(miss.params$NL_r); print(miss.params$pi); print(phis)
+    print(miss_cols0); print(ref_cols0); print(sim.params$sim_index)
     sim.mask = simulateMask(data=data, scheme=miss.params$scheme, mechanism=miss.params$mechanism, NL_r=miss.params$NL_r,
                             pi=miss.params$pi, phis=phis, miss_cols=miss_cols0, ref_cols=ref_cols0,
                             seed = sim.params$sim_index*9)

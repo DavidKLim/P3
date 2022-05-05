@@ -1,11 +1,24 @@
 
 # packages: reticulate
 dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, learn_r, data_types_x, Ignorable,
-                            family, link, normalize, early_stop, trace, draw_miss=T,
-                 hyperparams = list(sigma="elu", hs=c(128L,64L), bss=c(1000L), lrs=c(0.01,0.001), impute_bs = 10000L, arch="IWAE",
-                                        niws=5L, n_imps = 500L, n_epochss=2002L, n_hidden_layers = c(0L,1L,2L), n_hidden_layers_y = c(0L), n_hidden_layers_r = c(0L,1L),
-                                        dim_zs = c(as.integer(floor(ncol(X)/4)), as.integer(floor(ncol(X)/2)), as.integer(floor(3*ncol(X)/4))),
-                                        L1_weights = 0)){
+                            family, link, normalize, early_stop, trace, draw_miss=T, init_r="default",
+                 # hyperparams = list(sigma="elu", bss=c(1000L), lrs=c(0.01,0.001), impute_bs = 1000L, arch="IWAE",
+                 #                    niws=5L, n_imps = 500L, n_epochss=2002L, n_hidden_layers = c(0L,1L,2L), n_hidden_layers_y = c(0L), n_hidden_layers_r = c(0L,1L),
+                 #                    h=c(128L,64L), h_y=NULL, h_r=c(16L,32L),
+                 #                    dim_zs = c(as.integer(floor(ncol(X)/12)),as.integer(floor(ncol(X)/4)), as.integer(floor(ncol(X)/2)), as.integer(floor(3*ncol(X)/4))),
+                 #                    L1_weights = 0)){
+                 ### physionet chose 2, 2, 1 HL's. increase # HL
+  hyperparams = list(sigma="elu", bss=c(1000L), lrs=c(0.01,0.001), impute_bs = 1000L, arch="IWAE",
+                     niws=5L, n_imps = 500L, n_epochss=2002L,
+                     # n_hidden_layers = c(0L,1L,2L), n_hidden_layers_y = c(0L), n_hidden_layers_r = c(0L,1L),  # simulations
+                     n_hidden_layers = c(0L,1L,2L,4L), n_hidden_layers_y = c(0L,1L,2L), n_hidden_layers_r = c(0L,1L),  # Physionet
+                     h=c(128L,64L), h_y=NULL, h_r=c(16L,32L),
+                     # dim_zs = as.integer(floor(c(ncol(X)/4, ncol(X)/2, 3*ncol(X)/4))), # simulations
+                     dim_zs = as.integer(floor(  c(ncol(X)/2, 3*ncol(X)/4)  )),  # Physionet
+                     L1_weights = 0)){
+  ####
+  
+  
   
   ## Hyperparameters ##
   # # dim_z --> as.integer() does floor()
@@ -18,7 +31,7 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
   # # dim_zs = c(as.integer(floor(ncol(X)/4)), as.integer(floor(ncol(X)/2)))
   # # if(Ignorable){ L1_weights = 0 } else{ L1_weights = c(1e-1, 5e-2, 0) }
   # L1_weights=0
-  sigma = hyperparams$sigma; hs = hyperparams$hs; bss = hyperparams$bss; lrs = hyperparams$lrs; impute_bs = hyperparams$impute_bs; arch = hyperparams$arch
+  sigma = hyperparams$sigma; h = hyperparams$h; h_y = hyperparams$h_y; h_r = hyperparams$h_r; bss = hyperparams$bss; lrs = hyperparams$lrs; impute_bs = hyperparams$impute_bs; arch = hyperparams$arch
   niws = hyperparams$niws; n_imps = hyperparams$n_imps; n_epochss = hyperparams$n_epochss; n_hidden_layers = hyperparams$n_hidden_layers
   n_hidden_layers_y = hyperparams$n_hidden_layers_y; n_hidden_layers_r = hyperparams$n_hidden_layers_r; dim_zs = hyperparams$dim_zs
   L1_weights = hyperparams$L1_weights
@@ -118,19 +131,32 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
     norm_mean_y = 0; norm_sd_y = 1
   }
   
+  # length_hs = length(h)
+  if(is.null(h_y)){ length_hy = 1 } else{ length_hy = length(h_y) }
+  if(is.null(h_r)){ length_hr = 1 } else{ length_hr = length(h_r) }
+  
+  length_nodes_HLs = if(any(n_hidden_layers==0)){ (length(n_hidden_layers)-1)*length(h)+1 } else { length(n_hidden_layers)*length(h)}
+  length_nodes_HLs_r = if(any(n_hidden_layers_r==0)){ (length(n_hidden_layers_r)-1)*length_hr+1 } else { length(n_hidden_layers_r)*length_hr }
+  length_nodes_HLs_y = if(any(n_hidden_layers_y==0)){ (length(n_hidden_layers_y)-1)*length_hy+1 } else { length(n_hidden_layers_y)*length_hy }
+  
+  n_combs_params = length(bss)*length(lrs)*length(niws)*length(n_epochss)*length_nodes_HLs*length_nodes_HLs_r*length_nodes_HLs_y*length(dim_zs)*length(L1_weights)
   
   if(sum(data_types_x=="cat") == 0){
-    LBs_trainVal = matrix(nrow = length(hs)*length(bss)*length(lrs)*length(niws)*length(n_epochss)*length(n_hidden_layers)*length(n_hidden_layers_y)*length(n_hidden_layers_r)*length(dim_zs)*length(L1_weights),
-                          ncol=13) #ncol = 13)
-    colnames(LBs_trainVal) = c("h","bs","lr","niw","epochs","nhls","nhl_y","nhl_r","dim_z", "L1_weight",
+    # LBs_trainVal = matrix(nrow = length(bss)*length(lrs)*length(niws)*length(n_epochss)*length(n_hidden_layers)*length(n_hidden_layers_y)*length(n_hidden_layers_r)*length_hs*length(dim_zs)*length(L1_weights),
+    #                       ncol=15) #ncol = 13)
+    LBs_trainVal = matrix(nrow = n_combs_params,
+                          ncol=15) #ncol = 13)
+    colnames(LBs_trainVal) = c("bs","lr","niw","dim_z", "epochs","nhls","nhl_y","nhl_r","h","h_y","h_r","L1_weight",
                                "LB_train",#"MSE_train_x","MSE_train_y",
                                "LB_valid",#,"MSE_valid_x","MSE_valid_y"
                                "MSE_real"
     )
   }else{
-    LBs_trainVal = matrix(nrow = length(hs)*length(bss)*length(lrs)*length(niws)*length(n_epochss)*length(n_hidden_layers)*length(n_hidden_layers_y)*length(n_hidden_layers_r)*length(dim_zs)*length(L1_weights),
-                          ncol=15) #ncol = 13)
-    colnames(LBs_trainVal) = c("h","bs","lr","niw","epochs","nhls","nhl_y","nhl_r","dim_z", "L1_weight",
+    # LBs_trainVal = matrix(nrow = length(bss)*length(lrs)*length(niws)*length(n_epochss)*length(n_hidden_layers)*length(n_hidden_layers_y)*length(n_hidden_layers_r)*length_hs*length(dim_zs)*length(L1_weights),
+    #                       ncol=17) #ncol = 13)
+    LBs_trainVal = matrix(nrow = n_combs_params,
+                          ncol=17) #ncol = 13)
+    colnames(LBs_trainVal) = c("bs","lr","niw","dim_z", "epochs","nhls","nhl_y","nhl_r","h","h_y","h_r","L1_weight",
                                "LB_train",#"MSE_train_x","MSE_train_y",
                                "LB_valid",#,"MSE_valid_x","MSE_valid_y"
                                "MSE_real","MSE_cat","PA_cat"
@@ -143,18 +169,28 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
   print("data_types_x_0"); print(data_types_x_0)
   torch$cuda$empty_cache()
   
-  for(i in 1:length(hs)){for(j in 1:length(bss)){for(k in 1:length(lrs)){
-    for(m in 1:length(niws)){for(mm in 1:length(n_epochss)){for(nn in 1:length(n_hidden_layers)){for(ny in 1:length(n_hidden_layers_y)){for(nr in 1:length(n_hidden_layers_r)){for(oo in 1:length(dim_zs)){for(pp in 1:length(L1_weights)){
-      # dl.glm(np$array(Xs$valid), np$array(Rxs$valid), np$array(Ys$valid), np$array(Rys$valid),
-      #                    np$array(covars_r_x), np$array(covars_r_y),
-      #                    np$array(norm_means_x), np$array(norm_sds_x), np$array(norm_mean_y), np$array(norm_sd_y),
-      #                    learn_r, Ignorable=F, family="Gaussian", link="identity",
-      #                    impute_bs=NULL, arch="IWAE", add_miss_term=F, draw_miss=T, 
-      #                    pre_impute_value=0, n_hidden_layers=2, n_hidden_layers_r=0, 
-      #                    h1=8, h2=8, h3=0, phi0=NULL, phi=NULL, dec_distrib="Normal",
-      #                    train=1, saved_model=NULL, sigma="elu", bs = 64, n_epochs = 2002,
-      #                    lr=0.001, L=20, M=20, trace=F)
-      
+  for(j in 1:length(bss)){for(k in 1:length(lrs)){
+    for(m in 1:length(niws)){for(oo in 1:length(dim_zs)){for(mm in 1:length(n_epochss)){
+      for(nn in 1:length(n_hidden_layers)){for(ny in 1:length(n_hidden_layers_y)){for(nr in 1:length(n_hidden_layers_r)){
+        ### if #HL = 0, no need to tune h ###
+        if(n_hidden_layers[nn]==0){h0=0L} else{h0=h}
+        if(n_hidden_layers_r[nr]==0){h_r0=0L} else{h_r0=h_r}
+        if(n_hidden_layers_y[ny]==0){h_y0=0L} else{h_y0=h_y}
+        
+        for(i in 1:length(h0)){
+          if(is.null(h_y)){ h_y0 = h0[i] }    # if h_y specified null, tune same value as h
+          if(h_y0==0 & n_hidden_layers_y[ny]>0){ h_y0 = h[1] }    # if nhl_y > 0 but nhl_rest = 0 --> h_y = first nonzero h
+          
+          for(ii in 1:length(h_y0)){
+            if(is.null(h_r0)){ h_r0 = h0[i] }
+            if(h_r0==0 & n_hidden_layers_r[nr]>0){ h_r0 = h[1] }
+            
+            for(iii in 1:length(h_r0)){
+              
+              for(pp in 1:length(L1_weights)){
+                print("bs, lr, niw, n_epochs, nhl, nhl_y, nhl_r, h0, h_y0, h_r0, dim_z, L1_weight")
+                print(c(bss[j],lrs[k],niws[m],n_epochss[mm],
+                        n_hidden_layers[nn],n_hidden_layers_y[ny],n_hidden_layers_r[nr],h0[i],h_y0[ii],h_r0[iii],dim_zs[oo],L1_weights[pp]  ))
       res_train = dlglm(np$array(Xs$train), np$array(Rxs$train), np$array(Ys$train), np$array(Rys$train),
                         np$array(covars_r_x), np$array(covars_r_y),
                         np$array(norm_means_x), np$array(norm_sds_x), np$array(norm_mean_y), np$array(norm_sd_y),
@@ -163,9 +199,9 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
                         Ignorable, family, link,
                         impute_bs, arch, draw_miss, 
                         pre_impute_value, n_hidden_layers[nn], n_hidden_layers_y[ny], n_hidden_layers_r[nr], 
-                        hs[i], hs[i], hs[i], phi0, phi, 
+                        h0[i], h_y0[ii], h_r0[iii], phi0, phi, 
                         1, NULL, sigma, bss[j], n_epochss[mm],
-                        lrs[k], niws[m], 1L, dim_zs[oo], dir_name=dir_name, trace=trace, save_imps=F, test_temp=0.5, L1_weight=L1_weights[pp])   
+                        lrs[k], niws[m], 1L, dim_zs[oo], dir_name=dir_name, trace=trace, save_imps=F, test_temp=0.5, L1_weight=L1_weights[pp], init_r=init_r)   
       res_valid = dlglm(np$array(Xs$valid), np$array(Rxs$valid), np$array(Ys$valid), np$array(Rys$valid),
                         np$array(covars_r_x), np$array(covars_r_y),
                         np$array(norm_means_x), np$array(norm_sds_x), np$array(norm_mean_y), np$array(norm_sd_y),
@@ -174,14 +210,14 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
                         Ignorable, family, link,
                         impute_bs, arch, draw_miss, 
                         pre_impute_value, n_hidden_layers[nn], n_hidden_layers_y[ny], n_hidden_layers_r[nr], 
-                        hs[i], hs[i], hs[i], phi0, phi, 
+                        h0[i], h_y0[ii], h_r0[iii], phi0, phi, 
                         0, res_train$saved_model, sigma, bss[j], 2L,
-                        lrs[k], niws[m], 1L, dim_zs[oo], dir_name=dir_name, trace=trace, save_imps=F, test_temp=res_train$'train_params'$'temp', L1_weight=res_train$'train_params'$'L1_weight')  # no early stopping in validation
+                        lrs[k], niws[m], 1L, dim_zs[oo], dir_name=dir_name, trace=trace, save_imps=F, test_temp=res_train$'train_params'$'temp', L1_weight=res_train$'train_params'$'L1_weight', init_r=init_r)  # no early stopping in validation
       
       val_LB = res_valid$'LB'    # res_train$'val_LB'
       
-      print(c(hs[i],bss[j],lrs[k],niws[m],n_epochss[mm],
-              n_hidden_layers[nn],n_hidden_layers_y[ny],n_hidden_layers_r[nr],dim_zs[oo],L1_weights[pp],
+      print(c(bss[j],lrs[k],niws[m],n_epochss[mm],
+              n_hidden_layers[nn],n_hidden_layers_y[ny],n_hidden_layers_r[nr],h0[i],h_y0[ii],h_r0[iii],dim_zs[oo],L1_weights[pp],
               res_train$'LB', #res_train$'MSE'$miss_x[length(res_train$'MSE'$miss_x)],
               #res_train$'MSE'$miss_y[length(res_train$'MSE'$miss_y)],
               val_LB#, res_valid$'MSE'$miss_x[length(res_valid$'MSE'$miss_x)],
@@ -189,8 +225,8 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
       ))
       print(res_valid$'errs')
       if(sum(data_types_x=="cat") == 0){
-        LBs_trainVal[index,]=c(hs[i],bss[j],lrs[k],niws[m],n_epochss[mm],
-                               n_hidden_layers[nn],n_hidden_layers_y[ny],n_hidden_layers_r[nr],dim_zs[oo],L1_weights[pp],
+        LBs_trainVal[index,]=c(bss[j],lrs[k],niws[m],dim_zs[oo],n_epochss[mm],
+                               n_hidden_layers[nn],n_hidden_layers_y[ny],n_hidden_layers_r[nr],h0[i],h_y0[ii],h_r0[iii],L1_weights[pp],
                                res_train$'LB', #res_train$'MSE'$miss_x[length(res_train$'MSE'$miss_x)],
                                #res_train$'MSE'$miss_y[length(res_train$'MSE'$miss_y)],
                                val_LB,
@@ -199,8 +235,8 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
                                res_valid$'errs'$'real'$'miss'
         )
       }else{
-        LBs_trainVal[index,]=c(hs[i],bss[j],lrs[k],niws[m],n_epochss[mm],
-                               n_hidden_layers[nn],n_hidden_layers_y[ny],n_hidden_layers_r[nr],dim_zs[oo],L1_weights[pp],
+        LBs_trainVal[index,]=c(bss[j],lrs[k],niws[m],dim_zs[oo],n_epochss[mm],
+                               n_hidden_layers[nn],n_hidden_layers_y[ny],n_hidden_layers_r[nr],h0[i],h_y0[ii],h_r0[iii],L1_weights[pp],
                                res_train$'LB', #res_train$'MSE'$miss_x[length(res_train$'MSE'$miss_x)],
                                #res_train$'MSE'$miss_y[length(res_train$'MSE'$miss_y)],
                                val_LB,
@@ -214,8 +250,10 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
       if(is.na(val_LB)){val_LB=-Inf}
       
       # save only the best result currently (not all results) --> save memory
-      if(index==1){opt_LB = val_LB; save(res_train, file=sprintf("%s/temp_opt_train.out",dir_name)); torch$save(res_train$'saved_model',sprintf("%s/temp_opt_train_saved_model.pth",dir_name))  #; save(opt_train, file="temp_opt_train.out")
-      }else if(val_LB > opt_LB){opt_LB = val_LB; save(res_train, file=sprintf("%s/temp_opt_train.out",dir_name)); torch$save(res_train$'saved_model',sprintf("%s/temp_opt_train_saved_model.pth",dir_name))} #; save(opt_train, file="temp_opt_train.out")
+      if(index==1){opt_LB = val_LB; save(res_train, file=sprintf("%s/opt_train.out",dir_name)); torch$save(res_train$'saved_model',sprintf("%s/opt_train_saved_model.pth",dir_name))  #; save(opt_train, file="temp_opt_train.out")
+      }else if(val_LB > opt_LB){opt_LB = val_LB; save(res_train, file=sprintf("%s/opt_train.out",dir_name)); torch$save(res_train$'saved_model',sprintf("%s/opt_train_saved_model.pth",dir_name))} #; save(opt_train, file="temp_opt_train.out")
+      
+      print(paste0("Search grid #",index," of ",n_combs_params))
       
       rm(res_train)
       rm(res_valid)
@@ -227,13 +265,14 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
       # reticulate::py_run_string("torch.cuda.empty_cache()")
       torch$cuda$empty_cache()
       gc()
-    }}}}}}}}}}
-  
-  saved_model = torch$load(sprintf("%s/temp_opt_train_saved_model.pth",dir_name))
-  load(sprintf("%s/temp_opt_train.out",dir_name))
+    }}}}}}}}}}}}
+  print("Hyperparameter tuning complete")
+  saved_model = torch$load(sprintf("%s/opt_train_saved_model.pth",dir_name))
+  load(sprintf("%s/opt_train.out",dir_name))
   train_params=res_train$train_params
   
-  test_bs = 500L
+  test_bs = 100L
+  # test_bs = 500L
   res_test = dlglm(np$array(Xs$test), np$array(Rxs$test), np$array(Ys$test), np$array(Rys$test),
                    np$array(covars_r_x), np$array(covars_r_y),
                    np$array(norm_means_x), np$array(norm_sds_x), np$array(norm_mean_y), np$array(norm_sd_y),
@@ -243,9 +282,9 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
                    train_params$pre_impute_value, train_params$n_hidden_layers, train_params$n_hidden_layers_y, train_params$n_hidden_layers_r, 
                    train_params$h1, train_params$h2, train_params$h3, phi0, phi, 
                    0, saved_model, sigma, test_bs, 2L,
-                   train_params$lr, n_imps, 1L, train_params$dim_z, dir_name=dir_name, trace=trace, save_imps=T, test_temp=train_params$'temp', L1_weight=train_params$'L1_weight')
+                   train_params$lr, n_imps, 1L, train_params$dim_z, dir_name=dir_name, trace=trace, save_imps=T, test_temp=train_params$'temp', L1_weight=train_params$'L1_weight', init_r=init_r)
   
-  fixed.params = list(dir_name=dir_name, covars_r_x=covars_r_x, covars_r_y=covars_r_y, learn_r=learn_r, Ignorable=Ignorable, family=family, link=link)
+  fixed.params = list(dir_name=dir_name, covars_r_x=covars_r_x, covars_r_y=covars_r_y, learn_r=learn_r, Ignorable=Ignorable, family=family, link=link, init_r=init_r)
   
   return(list(results=res_test, fixed.params=fixed.params))
   

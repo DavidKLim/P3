@@ -1,4 +1,4 @@
-def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean_y, norm_sd_y, learn_r, data_types_x, data_types_x_0, Cs, early_stop, X_val, Rx_val, Y_val, Ry_val, Ignorable=False, family="Gaussian", link="identity", impute_bs=None,arch="IWAE",draw_miss=True,pre_impute_value=0,n_hidden_layers=2,n_hidden_layers_y=0,n_hidden_layers_r=0,h1=8,h2=8,h3=0,phi0=None,phi=None,train=1,saved_model=None,sigma="elu",bs = 64,n_epochs = 2002,lr=0.001,niws_z=20,M=20,dim_z=5,dir_name=".",trace=False,save_imps=False, test_temp=0.5, L1_weight=0):
+def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean_y, norm_sd_y, learn_r, data_types_x, data_types_x_0, Cs, early_stop, X_val, Rx_val, Y_val, Ry_val, Ignorable=False, family="Gaussian", link="identity", impute_bs=None,arch="IWAE",draw_miss=True,pre_impute_value=0,n_hidden_layers=2,n_hidden_layers_y=0,n_hidden_layers_r=0,h1=8,h2=8,h3=0,phi0=None,phi=None,train=1,saved_model=None,sigma="elu",bs = 64,n_epochs = 2002,lr=0.001,niws_z=20,M=20,dim_z=5,dir_name=".",trace=False,save_imps=False, test_temp=0.5, L1_weight=0, init_r="default", full_obs_ids=None, miss_ids=None):
   # add early_stop, X_val, Rx_val, Y_val, Ry_val as inputs
   weight_y = 1
   # weight_y = 5
@@ -7,6 +7,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   #family="Poisson"; link="log"
   # covars_r_x: vector of P: 1/0 for inclusion/exclusion of each feature as covariate of missingness model
   # covars_r_y: 1 or 0
+  
+  ## init_r = "default" or "alt"
   
   # > data_types_x
   # [1] "real"  "real"  "real"  "count" "count" "count" "cat"   "cat"   "cat"   "cat"   "cat"   "cat"
@@ -22,7 +24,6 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   import scipy.io
   import scipy.sparse
   import pandas as pd
-  import matplotlib.pyplot as plt
   import torch.distributions as td
   from torch import nn, optim
   from torch.nn import functional as F
@@ -60,8 +61,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   print("p_real, p_count, p_pos, p_cat:")
   print(str(p_real) + ", " + str(p_count) + ", " + str(p_pos) + ", " + str(p_cat))
   ids_types = [ids_real, ids_count, ids_pos, ids_cat]
-  print("ids_types:")
-  print(ids_types)
+  # print("ids_types:")
+  # print(ids_types)
   
   
 
@@ -214,10 +215,15 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   # Define decoder/encoder
   if (sigma=="relu"): act_fun=torch.nn.ReLU()
   elif (sigma=="elu"): act_fun=torch.nn.ELU()
+  elif (sigma=="tanh"): act_fun=torch.nn.Tanh()
+  elif (sigma=="sigmoid"): act_fun=torch.nn.Sigmoid()
 
-  full_obs_ids = np.sum(Rx==0,axis=0)==0    # columns that are fully observed need not have missingness modelled
-  miss_ids = np.sum(Rx==0,axis=0)>0
-
+  if train==1:
+    ## at test time, full_obs_ids may be different than in training time..
+    full_obs_ids = np.sum(Rx==0,axis=0)==0    # columns that are fully observed need not have missingness modelled
+    miss_ids = np.sum(Rx==0,axis=0)>0
+    
+  
   p_miss = np.sum(~full_obs_ids)
   
   # n_params_xm = 2*p # Gaussian (mean, sd. p features in X)
@@ -234,8 +240,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   n_params_r = p_miss*(miss_x) + 1*(miss_y) # Bernoulli (prob. p features in X) --> 1 if missing in y and not X. #of missing features to model.
   # n_params_r = p_miss*(miss_x) + C*(miss_y) # Bernoulli (prob. p features in X) --> 1 if missing in y and not X. #of missing features to model.
 
-
-  def network_maker(act_fun, n_hidden_layers, in_h, h, out_h, bias=True, dropout=False):
+  def network_maker(act_fun, n_hidden_layers, in_h, h, out_h, bias=True, dropout=False, init="orthogonal"):
+    # dropout=True   ### COMMENT OUT
     # create NN layers
     if n_hidden_layers==0:
       layers = [ nn.Linear(in_h, out_h, bias), ]
@@ -250,29 +256,37 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     
     # insert dropout layer (if applicable)
     if dropout:
-      layers.insert(0, nn.Dropout())
+      layers.insert(0, nn.Dropout(p=dropout_pct))
     
     # create NN
     model = nn.Sequential(*layers)
     
     # initialize weights
     def weights_init(layer):
-      if type(layer) == nn.Linear: torch.nn.init.orthogonal_(layer.weight)
+      if init=="normal":
+        # if type(layer) == nn.Linear: torch.nn.init.normal_(layer.weight, mean=0, std=1)  # default std.normal
+        if type(layer) == nn.Linear: torch.nn.init.normal_(layer.weight, mean=0, std=10)  # default std.normal
+      elif init=="orthogonal":
+        if type(layer) == nn.Linear: torch.nn.init.orthogonal_(layer.weight)
+      elif init=="uniform":
+        if type(layer) == nn.Linear: torch.nn.init.uniform_(layer.weight, a=-2, b=2)
     model.apply(weights_init)
     
     return model
-  
+
   # formulation of NN_xm in mixed data type scenario
   NNs_xm = {}   # include Xo, R (nonignorable), Z, and Yo
   if Ignorable: p2 = p+dim_z+1
   else: p2 = 2*p+dim_z+1
   # if Ignorable: p2 = p+dim_z+C
   # else: p2 = 2*p+dim_z+C
+  
+  init0 = "orthogonal"   # can change this to "normal", or "uniform" user-defined later
   if miss_x:
     # NN_xm = network_maker(act_fun, n_hidden_layers, 2*p, h1, n_params_xm, True, False).cuda()
-    if exists_types[0]: NNs_xm['real'] = network_maker(act_fun, n_hidden_layers, p2, h1, 2*p_real, True, False).cuda()
-    if exists_types[1]: NNs_xm['count'] = network_maker(act_fun, n_hidden_layers, p2, h1, 2*p_count, True, False).cuda()
-    if exists_types[2]: NNs_xm['pos'] = network_maker(act_fun, n_hidden_layers, p2, h1, 2*p_pos, True, False).cuda()
+    if exists_types[0]: NNs_xm['real'] = network_maker(act_fun, n_hidden_layers, p2, h1, 2*p_real, True, False, init0).cuda()
+    if exists_types[1]: NNs_xm['count'] = network_maker(act_fun, n_hidden_layers, p2, h1, 2*p_count, True, False, init0).cuda()
+    if exists_types[2]: NNs_xm['pos'] = network_maker(act_fun, n_hidden_layers, p2, h1, 2*p_pos, True, False, init0).cuda()
     if exists_types[3]:
       NNs_xm['cat']=[]
       where_ids_cat = np.where(ids_cat)
@@ -283,7 +297,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         # print(X[:,where_ids_cat[0][ii]])
         # print(len(np.unique(X[~np.isnan(X[:,where_ids_cat[0][ii]]),where_ids_cat[0][ii]])))
         # Cs.append( len(np.unique(X[~np.isnan(X[:,where_ids_cat[0][ii]]),where_ids_cat[0][ii]])) )
-        NNs_xm['cat'].append( network_maker(act_fun, n_hidden_layers, p2, h1, int(Cs[ii]), True, False).cuda() )
+        NNs_xm['cat'].append( network_maker(act_fun, n_hidden_layers, p2, h1, int(Cs[ii]), True, False, init0).cuda() )
   
   # if miss_y: NN_ym = network_maker(act_fun, n_hidden_layers, p+2, h1, n_params_ym, True, False).cuda()
   ## need to fix
@@ -292,37 +306,51 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   else: p3 = 2*p+2
   # if Ignorable: p3 = p+2
   # else: p3 = 2*p+2*C
-  if miss_y: NN_ym = network_maker(act_fun, n_hidden_layers_y, p3, h1, n_params_ym, True, False).cuda()  # need to fix
+  if miss_y: NN_ym = network_maker(act_fun, n_hidden_layers_y, p3, h1, n_params_ym, True, False, init0).cuda()  # need to fix
   else: NN_ym = None
   # NN_y = network_maker(act_fun, 0, p, h2, n_params_y, False, False).cuda()
   # NN_y = network_maker(act_fun, n_hidden_layers_y, p, h2, n_params_y, True, False).cuda()      # need bias term for nonlinear NN_y!!
-  NN_y = network_maker(act_fun, n_hidden_layers_y, p, h2, n_params_y, True, False).cuda()      # need bias term for nonlinear NN_y!!
+  NN_y = network_maker(act_fun, n_hidden_layers_y, p, h2, n_params_y, True, False, init0).cuda()      # need bias term for nonlinear NN_y!!
   # NN_y = network_maker(act_fun, n_hidden_layers_y, p, h2, n_params_y, False, False).cuda()       # no intercept
 
   # if not Ignorable: NN_r = network_maker(act_fun, n_hidden_layers_r, pr, h3, n_params_r, True, False).cuda()
-  if not Ignorable: NN_r = network_maker(act_fun, n_hidden_layers_r, pr, h1, n_params_r, True, False).cuda()
+  if not Ignorable: NN_r = network_maker(act_fun, n_hidden_layers_r, pr, h3, n_params_r, True, False, init0).cuda()
   else: NN_r=None
+  
+  if init_r=="alt" and not Ignorable:
+    dist = torch.distributions.Uniform(torch.Tensor([-2]), torch.Tensor([2]))   # proposed alternative initialization for MNAR/MAR
+    # dist = torch.distributions.Normal(torch.Tensor([0]), torch.Tensor([1]))
+    #### sparse not defined here
+    # if sparse=="dropout": sh1, sh2 = NN_r[1].weight.shape
+    # else: sh1, sh2 = NN_r[0].weight.shape
+    sh1, sh2 = NN_r[0].weight.shape
+    
+    custom_weights = (dist.sample([sh1, sh2]).reshape([sh1,sh2])).cuda()  # N(0,1) or Unif(-2,2)
+    with torch.no_grad():
+      # if sparse=="dropout": NN_r[1].weight = torch.nn.Parameter(custom_weights)
+      # else: NN_r[0].weight = torch.nn.Parameter(custom_weights)
+      NN_r[0].weight = torch.nn.Parameter(custom_weights)
   
   # encoder = network_maker(act_fun, n_hidden_layers, p+1, h1, 2*dim_z, True, False).cuda()   # rdeponz = F
   # encoder = network_maker(act_fun, n_hidden_layers, p+C, h1, 2*dim_z, True, False).cuda()   # rdeponz = F
-  encoder = network_maker(act_fun, n_hidden_layers, p, h1, 2*dim_z, True, False).cuda()   # rdeponz = F
+  encoder = network_maker(act_fun, n_hidden_layers, p, h1, 2*dim_z, True, False, init0).cuda()   # rdeponz = F
   # encoder = network_maker(act_fun, n_hidden_layers, 2*p, h1, 2*dim_z, True, False).cuda()  # rdeponz=T
   decoders = { }
   if exists_types[0]:
     # X_real = X[:,ids_real]
-    decoders['real'] = network_maker(act_fun, n_hidden_layers, dim_z, h1, 2*p_real, True, False).cuda()
+    decoders['real'] = network_maker(act_fun, n_hidden_layers, dim_z, h1, 2*p_real, True, False, init0).cuda()
   if exists_types[1]:
-    decoders['count'] = network_maker(act_fun, n_hidden_layers, dim_z, h1, 2*p_count, True, False).cuda()
+    decoders['count'] = network_maker(act_fun, n_hidden_layers, dim_z, h1, 2*p_count, True, False, init0).cuda()
     # decoders['count'] = network_maker(act_fun, n_hidden_layers, dim_z, h1, p_count, True, False).cuda()      # poisson lambda parameter (count p(x))
   if exists_types[2]:
-    decoders['pos'] = network_maker(act_fun, n_hidden_layers, dim_z, h1, 2*p_pos, True, False).cuda()
+    decoders['pos'] = network_maker(act_fun, n_hidden_layers, dim_z, h1, 2*p_pos, True, False, init0).cuda()
   if exists_types[3]:
     # X_cat = X[:,ids_cat]
     
     decoders['cat']=[]
     for ii in range(0,p_cat):
       # decoders['cat'] are lists with elements pertaining to each categorical variable
-      decoders['cat'].append( network_maker(act_fun, n_hidden_layers, dim_z, h1, int(Cs[ii]), True, False).cuda() )
+      decoders['cat'].append( network_maker(act_fun, n_hidden_layers, dim_z, h1, int(Cs[ii]), True, False, init0).cuda() )
     ###### THIS IS WRONG (needs work): need separate decoder for each categorical covariate, since each covar may have diff # of categories
     # decoder_cat = network_maker(act_fun, n_hidden_layers, dim_z, h1, C*p_cat, True, False).cuda()
 
@@ -478,18 +506,18 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
             # if Ignorable: xm_flat[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)] = qxmgivenxors['cat'][ii].sample([M]).reshape([M*niw*batch_size,-1])
             # else: xm_flat[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)] = qxmgivenxors['cat'][ii].rsample([M]).reshape([M*niw*batch_size,-1])
             xm_flat[:,(p_real + p_count + p_pos + C0):(p_real + p_count + p_pos + C1)] = qxmgivenxors['cat'][ii].rsample([M]).reshape([M*niw*batch_size,-1])
-        if torch.sum(torch.isnan(xm_flat))>0:
-          print("minibatched data:")
-          print(iota_x[:1])
-          print(iota_x.shape)
-          print("mask:")
-          print(mask_x[:1])
-          print("p_xs['real'] (mean/scale):")
-          print(params_x['real']['mean'][:4])
-          print(params_x['real']['scale'][:4])
-          print("xm_flat:")
-          print(xm_flat[:4])
-          sys.exit("NA in xm_flat")
+        # if torch.sum(torch.isnan(xm_flat))>0:
+        #   print("minibatched data:")
+        #   print(iota_x[:1])
+        #   print(iota_x.shape)
+        #   print("mask:")
+        #   print(mask_x[:1])
+        #   print("p_xs['real'] (mean/scale):")
+        #   print(params_x['real']['mean'][:4])
+        #   print(params_x['real']['scale'][:4])
+        #   print("xm_flat:")
+        #   print(xm_flat[:4])
+        #   sys.exit("NA in xm_flat")
       else: xm_flat = tiled_iota_xfull   # MAY NEED ADJUSTMENT IF CATEGORICAL VARIABLES (onehot)
     else: 
       qxmgivenxors=None; params_xm=None; xm_flat = torch.Tensor.repeat(iota_x,[M,1])
@@ -1152,8 +1180,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   # return {'xm': xm}
   
   # initialize weights
-  def weights_init(layer):
-    if type(layer) == nn.Linear: torch.nn.init.orthogonal_(layer.weight)
+  # def weights_init(layer):
+  #   if type(layer) == nn.Linear: torch.nn.init.orthogonal_(layer.weight)
   
   # Define ADAM optimizer
   if (not Ignorable) and learn_r:   # is learn_r = Ignorable?
@@ -1161,21 +1189,23 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   else:
     params = list(NN_y.parameters()) + list(encoder.parameters())
   if miss_x:
-    if exists_types[0]: params = params + list(NNs_xm['real'].parameters()); NNs_xm['real'].apply(weights_init)
-    if exists_types[1]: params = params + list(NNs_xm['count'].parameters()); NNs_xm['count'].apply(weights_init)
-    if exists_types[2]: params = params + list(NNs_xm['pos'].parameters()); NNs_xm['pos'].apply(weights_init)
+    if exists_types[0]: params = params + list(NNs_xm['real'].parameters())#; NNs_xm['real'].apply(weights_init)
+    if exists_types[1]: params = params + list(NNs_xm['count'].parameters())#; NNs_xm['count'].apply(weights_init)
+    if exists_types[2]: params = params + list(NNs_xm['pos'].parameters())#; NNs_xm['pos'].apply(weights_init)
     if exists_types[3]:
       for ii in range(0, p_cat):
-        params = params + list(NNs_xm['cat'][ii].parameters()); NNs_xm['cat'][ii].apply(weights_init)
+        params = params + list(NNs_xm['cat'][ii].parameters())#; NNs_xm['cat'][ii].apply(weights_init)
   if miss_y: params = params + list(NN_ym.parameters())
   
-  encoder.apply(weights_init)
-  if exists_types[0]: params = params + list(decoders['real'].parameters()); decoders['real'].apply(weights_init)
-  if exists_types[1]: params = params + list(decoders['count'].parameters()); decoders['count'].apply(weights_init)
-  if exists_types[2]: params = params + list(decoders['pos'].parameters()); decoders['pos'].apply(weights_init)
+  #encoder.apply(weights_init)
+  if exists_types[0]: params = params + list(decoders['real'].parameters())#; decoders['real'].apply(weights_init)
+  if exists_types[1]: params = params + list(decoders['count'].parameters())#; decoders['count'].apply(weights_init)
+  if exists_types[2]: params = params + list(decoders['pos'].parameters())#; decoders['pos'].apply(weights_init)
   if exists_types[3]:
     for ii in range(0,p_cat):
-      params = params + list(decoders['cat'][ii].parameters()); decoders['cat'][ii].apply(weights_init)
+      params = params + list(decoders['cat'][ii].parameters())#; decoders['cat'][ii].apply(weights_init)
+  
+  
   optimizer = optim.Adam(params,lr=lr)
   # optimizer.add_param_group({"params":mu_x})
   # optimizer.add_param_group({"params":scale_x})
@@ -1196,9 +1226,9 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   if (trace): print(xhat_0[trace_ids])
 
   # if miss_x: NN_xm.apply(weights_init)
-  if miss_y: NN_ym.apply(weights_init)
-  NN_y.apply(weights_init)
-  if (learn_r and not Ignorable): NN_r.apply(weights_init)
+  # if miss_y: NN_ym.apply(weights_init)
+  # NN_y.apply(weights_init)
+  # if (learn_r and not Ignorable): NN_r.apply(weights_init)
   
   time_train=[]
   time_impute=[]
@@ -1364,17 +1394,18 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         params_z['mean'][splits[it],:] = temp_params_z['mean']; params_z['scale'][splits[it],:] = temp_params_z['scale']
         # torch.autograd.set_detect_anomaly(True)
         
-        if torch.isnan(loss):
-          print("px real mean and scale:")
-          print(params_x['real']['mean'][splits[it],:][:20])
-          print(params_x['real']['scale'][splits[it],:][:20])
-          print("px count mean and scale:")
-          print(params_x['count']['mean'][splits[it],:][:20])
-          print(params_x['count']['scale'][splits[it],:][:20])
-          print("qxm count mean and scale:")
-          print(params_xm['count']['mean'][splits[it],:][:20])
-          print(params_xm['count']['scale'][splits[it],:][:20])
-          sys.exit("NA loss. Printing loss_fit object to debug")
+        # if torch.isnan(loss):
+        #   print("px real mean and scale:")
+        #   print(params_x['real']['mean'][splits[it],:][:20])
+        #   print(params_x['real']['scale'][splits[it],:][:20])
+        #   print("px count mean and scale:")
+        #   print(params_x['count']['mean'][splits[it],:][:20])
+        #   print(params_x['count']['scale'][splits[it],:][:20])
+        #   print("qxm count mean and scale:")
+        #   print(params_xm['count']['mean'][splits[it],:][:20])
+        #   print(params_xm['count']['scale'][splits[it],:][:20])
+        #   sys.exit("NA loss. Printing loss_fit object to debug")
+        
         loss.backward()
         optimizer.step()
         
@@ -1413,7 +1444,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         # LB = -total_loss/(niws_z*M*n) + np.log(niws_z) + np.log(M) # miss_x^2 + miss_y^2 = 1 if one miss, 2 if both miss     # redundant: + np.log(M)*(miss_x and miss_y)
         LB = -total_loss + np.log(niws_z) + np.log(M) # miss_x^2 + miss_y^2 = 1 if one miss, 2 if both miss     # redundant: + np.log(M)*(miss_x and miss_y)
       
-      print("Epoch " + str(ep) + ", LB = " + str(LB))
+      # print("Epoch " + str(ep) + ", LB = " + str(LB))
       LB_epoch=np.append(LB_epoch,LB)
       
       ### Add early stop criterion here ######
@@ -1489,7 +1520,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
           val_LB = -total_val_loss/(niws_z*M*n_val) + np.log(niws_z) + np.log(M) # just 1 now: sampling M times no matter miss_x, miss_y or not either     # redundant: + np.log(M)*(miss_x and miss_y)
         val_LB_epoch=np.append(val_LB_epoch,val_LB)
         
-        print("validation LB: " + str(val_LB))
+        # print("validation LB: " + str(val_LB))
         
         # Start checking for early_stop after 10 epochs and when temperature hits minimum
         if (ep > early_stop_check_epochs) and temp.item() <= temp_min.item():
@@ -1514,14 +1545,14 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
             torch.save(saved_model, dir_name + "/temp_model.pth")
             opt_params = {'x': params_x, 'xm': params_xm, 'y': params_y, 'ym': params_ym, 'r': params_r, 'z': params_z}
             patience_index = 0 # reset patience to 0
-            print("opt_val_LB: " + str(opt_val_LB))
+            # print("opt_val_LB: " + str(opt_val_LB))
           else:
             if val_LB_epoch[ep-1] > opt_val_LB:   # if val_LB is larger the opt_val_LB by any value, still replace the saved model, but don't reset patience unless it is greater by a certain amt
               opt_LB = LB
               torch.save(saved_model, dir_name + "/temp_model.pth")
               opt_params = {'x': params_x, 'xm': params_xm, 'y': params_y, 'ym': params_ym, 'r': params_r, 'z': params_z}
             patience_index = patience_index + 1
-            print("patience: " + str(patience_index))
+            # print("patience: " + str(patience_index))
             if patience_index >= patience:
               early_stopped = True
               early_stop_epochs = ep
@@ -1534,7 +1565,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
               if (learn_r and not Ignorable): NN_r = saved_model['NN_r']
       else: val_LB=None
       
-      if ep % 20 == 1 or early_stopped:
+      if ep % 100 == 1 or early_stopped:
         print('Epoch %g' %ep)
         print('Likelihood lower bound  %g' %LB) # Gradient step
         print("temp: " + str(temp))
@@ -1656,7 +1687,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         print("NN_y bias:")
         print((NN_y[0].bias).cpu().data.numpy())
         print("NN_y weights (first 5):")
-        print(np.around(((NN_y[0].weight).cpu().data.numpy())[:5], decimals=3))
+        print(np.around(((NN_y[0].weight).cpu().data.numpy())[:5,:5], decimals=3))
         print("Y (first 5):")
         print(yhat_0[:5])
         print("params_y (first 5):")
@@ -1670,8 +1701,8 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
           print("params_y lambda (first 5)")
           print(params_y['lambda'][:5])
         if not Ignorable:
-          print("NN_r bias:")
-          print(np.around((NN_r[0].bias).cpu().data.numpy(), decimals=3))
+          print("NN_r bias (first 5):")
+          print(np.around((NN_r[0].bias[:5]).cpu().data.numpy(), decimals=3))
           print("NN_r weights (" + str(pr) + " cols = input, " + str(n_params_r) + " rows = output) (first 4):")
           print(np.around((NN_r[0].weight[0:min(4,n_params_r),0:min(4,pr)]).cpu().data.numpy(), decimals=3))
         print('-----')
