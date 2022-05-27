@@ -1,4 +1,4 @@
-def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean_y, norm_sd_y, learn_r, data_types_x, data_types_x_0, Cs, early_stop, X_val, Rx_val, Y_val, Ry_val, Ignorable=False, family="Gaussian", link="identity", impute_bs=None,arch="IWAE",draw_miss=True,pre_impute_value=0,n_hidden_layers=2,n_hidden_layers_y=0,n_hidden_layers_r=0,h1=8,h2=8,h3=0,phi0=None,phi=None,train=1,saved_model=None,sigma="elu",bs = 64,n_epochs = 2002,lr=0.001,niws_z=20,M=20,dim_z=5,dir_name=".",trace=False,save_imps=False, test_temp=0.5, L1_weight=0, init_r="default", full_obs_ids=None, miss_ids=None):
+def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean_y, norm_sd_y, learn_r, data_types_x, data_types_x_0, Cs, Cy, early_stop, X_val, Rx_val, Y_val, Ry_val, Ignorable=False, family="Gaussian", link="identity", impute_bs=None,arch="IWAE",draw_miss=True,pre_impute_value=0,n_hidden_layers=2,n_hidden_layers_y=0,n_hidden_layers_r=0,h1=8,h2=8,h3=0,phi0=None,phi=None,train=1,saved_model=None,sigma="elu",bs = 64,n_epochs = 2002,lr=0.001,niws_z=20,M=20,dim_z=5,dir_name=".",trace=False,save_imps=False, test_temp=0.5, L1_weight=0, init_r="default", full_obs_ids=None, miss_ids=None, unbalanced=False):
   # add early_stop, X_val, Rx_val, Y_val, Ry_val as inputs
   weight_y = 1
   # weight_y = 5
@@ -20,6 +20,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   # import torchvision
   import torch.nn as nn
   import numpy as np
+  import numpy_indexed as npi
   import scipy.stats
   import scipy.io
   import scipy.sparse
@@ -87,8 +88,9 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   #family="Gaussian"   # p(y|x) family
   #link="identity"     # g(E[y|x]) = eta
   if (family=="Multinomial"):
-    C = len(np.unique(Y[~np.isnan(Y)]))   # if we're looking at categorical data, then determine #categories by unique values (nonmissing) in Y
-    print("# classes: " + str(C))
+    # C = len(np.unique(Y[~np.isnan(Y)]))   # if we're looking at categorical data, then determine #categories by unique values (nonmissing) in Y
+    # print("# classes: " + str(C))
+    C=Cy
   else:
     C=1
     
@@ -1298,16 +1300,52 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       # a = torch.cuda.memory_allocated(0)
       # f = r-a  # free inside reserved
       # print("before epoch " + str(ep) + " free memory:", str(f))
-      perm = np.random.permutation(n) # We use the "random reshuffling" version of SGD
-      batches_xfull = np.array_split(xfull[perm,],n/bs)
-      batches_x = np.array_split(xhat_0[perm,], n/bs)
-      batches_yfull = np.array_split(yfull[perm,],n/bs)
-      batches_y = np.array_split(yhat_0[perm,], n/bs)
-      batches_mask_x = np.array_split(mask_x[perm,], n/bs)     # only mask for x. for y --> include as a new mask
-      batches_mask_y = np.array_split(mask_y[perm,], n/bs)     # only mask for x. for y --> include as a new mask
+      
+      if unbalanced:
+        # for Unbalanced Y class variable
+        # Create custom splits to draw same # of obs from each class
+        ids_classes_y = npi.group_by(Y).split(range(0,n))   # length-K array of indices of values for each category of Y
+        n_classes_y = [len(i) for i in ids_classes_y]
+        
+        n_majority, n_classes_minority = np.max(n_classes_y), np.min(n_classes_y)
+        bs2 = min([n_classes_minority, np.floor(bs/len(ids_classes_y))])     # number drawn from each class: should be at least the total of smallest class, and at most the original bs/#classes
+        ids_majority = ids_classes_y[np.argmax(n_classes_y)]
+        np.random.shuffle( ids_majority )
+        
+        n_partitions = np.ceil(n_majority/bs2)    # number of partitions (times to update in epoch)
+        splits = np.array_split(ids_majority, n_partitions)    # split the majority class equally first (append samples of nonmajority later)
+        n_splits_majority = [len(i) for i in splits]    # number in each split in majority class --> should be less than bs in each split
+        
+        ids_nonmajority_classes_y = ids_classes_y        # create first, then delete majority class. Sample from these IDs equally
+        ids_nonmajority_classes_y.pop(np.argmax(n_classes_y))
+        
+        
+        ## Nested for loop to draw the same number of samples (as in each majority class split) from minority classes, without replacement.
+        ## may be a more efficient way to do this
+        for i in range(0,len(splits)):
+          for j in range(0,len(ids_nonmajority_classes_y)):
+            splits[i] = np.append(splits[i], np.random.choice(ids_nonmajority_classes_y[j], n_splits_majority[i], replace=False))
+        # [len(i) for i in splits]    # should be less than bs in each split (accomplished by "ceil")
+        # [len(np.unique(i)) != len(i) for i in splits]    # no duplicates
+        
+        batches_xfull = [xfull[i,:] for i in splits]
+        batches_x = [xhat_0[i,:] for i in splits]
+        batches_yfull = [yfull[i] for i in splits]
+        batches_y = [yhat_0[i] for i in splits]
+        batches_mask_x = [mask_x[i,:] for i in splits]
+        batches_mask_y = [mask_y[i,:] for i in splits]
+        if covars: batches_covar = [covars_miss[i] for i in splits]
+      else:
+        perm = np.random.permutation(n) # We use the "random reshuffling" version of SGD
+        batches_xfull = np.array_split(xfull[perm,],n/bs)
+        batches_x = np.array_split(xhat_0[perm,], n/bs)
+        batches_yfull = np.array_split(yfull[perm,],n/bs)
+        batches_y = np.array_split(yhat_0[perm,], n/bs)
+        batches_mask_x = np.array_split(mask_x[perm,], n/bs)     # only mask for x. for y --> include as a new mask
+        batches_mask_y = np.array_split(mask_y[perm,], n/bs)     # only mask for x. for y --> include as a new mask
+        if covars: batches_covar = np.array_split(covars_miss[perm,], n/bs)
+        splits = np.array_split(perm,n/bs)
       batches_loss = []
-      if covars: batches_covar = np.array_split(covars_miss[perm,], n/bs)
-      splits = np.array_split(perm,n/bs)
       t0_train=time.time()
       for it in range(len(batches_x)):
       # for it in range(8):        # testing 10% minibatches per epoch, with low minibatch size
@@ -1455,6 +1493,42 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         ##################################################################
         ###### COMPUTE VALIDATION LOSS (for early stopping criteria) #####
         ##################################################################
+        
+        # if unbalanced:   ##### commented out for now: validation may not require different treatment of unbalanced. (would this even make sense when validating?)
+        #   # for Unbalanced Y class variable
+        #   # Create custom splits to draw same # of obs from each class
+        #   ids_classes_y = npi.group_by(Y_val).split(range(0,n_val))   # length-K array of indices of values for each category of Y
+        #   n_classes_y = [len(i) for i in ids_classes_y]
+        #   
+        #   n_majority, n_classes_minority = np.max(n_classes_y), np.min(n_classes_y)
+        #   bs_val2 = min([n_classes_minority, np.floor(bs_val/len(ids_classes_y))])     # number drawn from each class: should be at least the total of smallest class, and at most the original bs/#classes
+        #   ids_majority = ids_classes_y[np.argmax(n_classes_y)]
+        #   np.random.shuffle( ids_majority )
+        #   
+        #   n_partitions = np.ceil(n_majority/bs2)    # number of partitions (times to update in epoch)
+        #   splits = np.array_split(ids_majority, n_partitions)    # split the majority class equally first (append samples of nonmajority later)
+        #   n_splits_majority = [len(i) for i in splits]    # number in each split in majority class --> should be less than bs in each split
+        #   
+        #   ids_nonmajority_classes_y = ids_classes_y        # create first, then delete majority class. Sample from these IDs equally
+        #   ids_nonmajority_classes_y.pop(np.argmax(n_classes_y))
+        #   
+        #   
+        #   ## Nested for loop to draw the same number of samples (as in each majority class split) from minority classes, without replacement.
+        #   ## may be a more efficient way to do this
+        #   for i in range(0,len(splits)):
+        #     for j in range(0,len(ids_nonmajority_classes_y)):
+        #       splits[i] = np.append(splits[i], np.random.choice(ids_nonmajority_classes_y[j], n_splits_majority[i], replace=False))
+        #   # [len(i) for i in splits]    # should be less than bs in each split (accomplished by "ceil")
+        #   # [len(np.unique(i)) != len(i) for i in splits]    # no duplicates
+        #   
+        #   batches_xfull = [xfull_val[i,:] for i in splits]
+        #   batches_x = [xhat_0_val[i,:] for i in splits]
+        #   batches_yfull = [yfull_val[i] for i in splits]
+        #   batches_y = [yhat_0_val[i] for i in splits]
+        #   batches_mask_x = [mask_x_val[i,:] for i in splits]
+        #   batches_mask_y = [mask_y_val[i,:] for i in splits]
+        #   if covars: batches_covar = [covars_miss[i] for i in splits]
+        # else:
         perm = np.random.permutation(n_val) # We use the "random reshuffling" version of SGD
         if (not draw_miss) and (not Ignorable): batches_xfull = np.array_split(xfull_val[perm,],n_val/bs_val); batches_yfull = np.array_split(yfull_val[perm,],n_val/bs_val)
         batches_x = np.array_split(xhat_0_val[perm,], n_val/bs_val)
@@ -1464,6 +1538,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         if covars: batches_covar = np.array_split(covars_miss[perm,], n_val/bs_val)
         #batches_prM = np.array_split(prM[perm,],n/bs)
         splits = np.array_split(perm,n_val/bs_val)
+        
         # minibatch save:
         # losses
         batches_val_loss = []
@@ -1599,7 +1674,7 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
           #   print("prob_Missing (avg over M, then K samples):")
           #   print(torch.mean(loss_fit['params_r']['probs'].reshape([M,-1]),axis=0).reshape([n,-1])[trace_ids])
         
-
+        ## For imputation, unbalanced response doesn't matter.
         t0_impute=time.time()
         batches_xfull = np.array_split(xfull,n/impute_bs)
         batches_yfull = np.array_split(yfull,n/impute_bs)
@@ -1646,7 +1721,10 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
         if exists_types[2]: err_x_pos = mse(xhat[:,ids_pos], xfull[:,ids_pos], mask_x[:,ids_pos])
         if exists_types[3]:
           err_x_cat0 = mse(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat]) #err_x_cat = mse(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat])
-          err_x_cat1 = pred_acc(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat],Cs) #err_x_cat = mse(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat])
+          if np.sum(np.isnan(xfull[:,ids_cat])) == 0:
+            err_x_cat1 = pred_acc(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat],Cs) #err_x_cat = mse(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat])
+          else:
+            err_x_cat1 = {'miss': np.nan, 'obs': np.nan}
 
         if family=="Multinomial": err_y = pred_acc(yhat, yfull, mask_y, C)
         else: err_y = mse(yhat*norm_sd_y+norm_mean_y, yfull*norm_sd_y+norm_mean_y, mask_y)
@@ -2014,16 +2092,23 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       # if exists_types[1]: err_x_count = mse(((xhat*norm_sds_x) + norm_means_x)[ids_count], ((xfull*norm_sds_x)+norm_means_x)[ids_count], mask_x[:,ids_count])
       errs = {}
       if exists_types[0]: err_x_real = mse(xhat[:,ids_real], xfull[:,ids_real], mask_x[:,ids_real]); errs['real']=err_x_real
+      else: errs['real']={'miss': np.nan, 'obs': np.nan}
       if exists_types[1]: err_x_count = mse(xhat[:,ids_count], xfull[:,ids_count], mask_x[:,ids_count]); errs['count']=err_x_count
+      else: errs['count']={'miss': np.nan, 'obs': np.nan}
       if exists_types[2]: err_x_pos = mse(xhat[:,ids_pos], xfull[:,ids_pos], mask_x[:,ids_pos]); errs['pos']=err_x_pos
+      else: errs['pos']={'miss': np.nan, 'obs': np.nan}
       if exists_types[3]: 
         err_x_cat0 = mse(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat]) #err_x_cat = mse(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat])
         err_x_cat1 = pred_acc(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat],Cs) #err_x_cat = mse(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat])
+        if np.sum(np.isnan(xfull[:,ids_cat])) == 0:
+          err_x_cat1 = pred_acc(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat],Cs) #err_x_cat = mse(xhat[:,ids_cat],xfull[:,ids_cat],mask_x[:,ids_cat])
+        else:
+          err_x_cat1 = {'miss': np.nan, 'obs': np.nan}
         errs['cat0'] = err_x_cat0
         errs['cat1'] = err_x_cat1
       else:
-        errs['cat0'] = np.nan
-        errs['cat1'] = np.nan
+        errs['cat0'] = {'miss': np.nan, 'obs': np.nan}
+        errs['cat1'] = {'miss': np.nan, 'obs': np.nan}
       if family=="Multinomial": err_y = pred_acc(yhat*norm_sd_y+norm_mean_y, yfull*norm_sd_y+norm_mean_y, mask_y, C)
       else: err_y = mse(yhat*norm_sd_y+norm_mean_y, yfull*norm_sd_y+norm_mean_y, mask_y)
       errs['y'] = err_y

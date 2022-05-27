@@ -4,7 +4,7 @@ inv_logit = function(x){
 
 # N=100000; P=2; pi=0.5
 # packages: MASS, qrnn
-simulateData = function(N, D, P, data_types, family, seed, NL_x, NL_y,
+simulateData = function(dataset = "SIM", N, D, P, data_types_x, family, seed, NL_x, NL_y,
                         beta=0.25, C=NULL, Cy=1){
   # if params are specified, then simulate from distributions
   # if file.name specified, then read in data file --> should have "data"
@@ -12,6 +12,7 @@ simulateData = function(N, D, P, data_types, family, seed, NL_x, NL_y,
     
   # mu=0; sd=1; beta=5
   library(qrnn)  # for softplus/sigmoid/elu function
+  library(xlsx)
   logsumexp <- function (x) {
     y = max(x)
     y + log(sum(exp(x - y)))
@@ -19,352 +20,494 @@ simulateData = function(N, D, P, data_types, family, seed, NL_x, NL_y,
   softmax <- function (x) {
     exp(x - logsumexp(x))
   }
+  print(dataset)
   
-  X = matrix(nrow=N, ncol=P)
-  set.seed(seed)
-  
-  P_real=sum(data_types=="real"); P_cat=sum(data_types=="cat"); P_count=sum(data_types=="count"); P_pos=sum(data_types=="pos")
-  ## Using SimMultiCorrData
-  # library(SimMultiCorrData)
-  # rho = diag(P)
-  # rho[rho==0] = 0.5
-  # x=SimMultiCorrData::rcorrvar(method="Polynomial",n=N,
-  #                              k_cont=P_real, k_cat=P_cat, k_pois=P_count,
-  #                              #### continuous ####
-  #                              means=mus, vars=sds, skews=rep(0, P_real),
-  #                              skurts=rep(0, P_real), fifths=rep(0, P_real), sixths=rep(0, P_real),
-  #                              #### count ####
-  #                              lam = exp( lambdas ),   # exp mean
-  #                              # pois_eps = rep(0.0001, P_count),
-  #                              #### cat ####
-  #                              marginal=lapply(probs,function(y)cumsum(y)[-length(y)]),
-  #                              support=lapply(probs,function(y)c(1:length(y))),
-  #                              rho=rho,
-  #                              seed=999)
-  # 
-  # X = list( x$continuous_variables, x$ordinal_variables, x$Poisson_variables )
-  # X <- matrix(unlist(X), ncol = P, byrow = F)
-  
-  ## Using Linear/Nonlinear like P2
-  X = matrix(nrow=N, ncol=P)
-  Ws = list(); Bs = list()  # save these weights/biases in generation of X from Z
-  if(NL_x){
+  if(dataset=="HEPMASS"){ # 7M x 27 --> 300K x 21 feats
+    # temp <- tempfile()
+    f1 = sprintf("./data/%s/1000_train.csv.gz",dataset)
+    f2 = sprintf("./data/%s/1000_test.csv.gz",dataset)
+    if(!file.exists(f1)){ download.file("https://archive.ics.uci.edu/ml/machine-learning-databases/00347/1000_train.csv.gz", destfile=f1) }
+    if(!file.exists(f2)){ download.file("https://archive.ics.uci.edu/ml/machine-learning-databases/00347/1000_test.csv.gz", destfile=f2) }
+    data1 <- read.csv(gzfile(f1),header=F,skip=1, nrows=700000)
+    data2 <- read.csv(gzfile(f2),header=F,skip=1, nrows=350000)
     
-    # N=100000; P=25; seed=9*sim_index
+    data=rbind(data1,data2)
+    
+    data = data[data[,1]==1,]    # only class 1 (class 0 is noise)
+    
+    classes = data[,1]
+    data = data[,-1]; data = data[,-ncol(data)]   # first column: class. last column is bad? pre-processed out
+    
+    features_to_remove = apply(data,2,function(x) max(table(x))) > 100    # if more than 100 repeats in feature, remove
+    data = data[, !features_to_remove]
+    
+    data = (data - colMeans(data)) / apply(data,2,sd)   # normalize
+    params=NULL
+    
+    X=data; Y=classes
+  }else if(dataset=="SPAM"){  # 4601 x 57
+    data <- read.csv(url("https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data"),header=FALSE)
+    colnames(data)=c(paste("word",c(1:48),sep=""),paste("char",c(1:6),sep=""),"capital_run_length_average",
+                     "capital_run_length_longest","capital_run_length_total","spam")
+    classes=data[,ncol(data)]
+    data=data[,-ncol(data)]    # take out class (2)
+    params=NULL
+    X=data; Y=classes
+  } else if(dataset=="IRIS"){ # 150 x 4
+    data <- read.csv(url("http://archive.ics.uci.edu/ml/machine-learning-databases/iris/iris.data"),
+                     header=FALSE, col.names=c("sepal.length","sepal.width","petal.length","petal.width","species"))
+    classes=data[,ncol(data)]
+    data=data[,-ncol(data)]     # take out class (3)
+    params=NULL
+    X=data; Y=classes
+  } else if(dataset=="ADULT"){  # 32561 x 14
+    data <- read.csv(url("http://mlr.cs.umass.edu/ml/machine-learning-databases/adult/adult.data"),header=FALSE)
+    colnames(data)=c("age","workclass","fnlwgt","education","education-num","marital-status","occupation","relationship",
+                     "race","sex","capital-gain","capital-loss","hours-per-week","native-country",'income_class')
+    classes=data[,ncol(data)]
+    data=data[,-ncol(data)]  # take out class (2)
+    params=NULL
+    X=data; Y=classes
+  } else if(dataset=="WINE"){ # 178 x 13
+    data <- read.csv(url("https://archive.ics.uci.edu/ml/machine-learning-databases/wine/wine.data"),header=FALSE)
+    colnames(data)=c("class","Alcohol","Malic_acid","Ash","Alcalinity_of_ash","Magnesium","Total_phenols","Flavanoids",
+                     "Nonflavanoid_phenols","Proanthocyanins","Color_intensity","Hue","OD280/OD315_of_diluted_wines","Proline")
+    classes=data[,1]
+    data=data[,-1]     # take out class (3)
+    params=NULL
+    X=data; Y=classes
+  } else if(dataset=="RED"){ # 1599 x 12
+    data <- read.csv(url("https://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-red.csv"),header=TRUE,sep=";")
+    classes=data[,ncol(data)]
+    data=data[,-ncol(data)]     # take out class (quality, 1-10)
+    params=NULL
+    X=data; Y=classes
+  } else if(dataset=="WHITE"){ # 4898 x 12
+    data <- read.csv(url("https://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-white.csv"),header=TRUE,sep=";")
+    classes=data[,ncol(data)]
+    data=data[,-ncol(data)]     # take out class (quality, 1-10)
+    params=NULL
+    X=data; Y=classes
+  } else if(dataset=="BREAST"){ # 569 x 30
+    # Wisconsin BC (Diagnostic)
+    data <- read.csv(url("https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/wdbc.data"),
+                     header=FALSE)
+    colnames(data)=c("ID","diagnosis","radius_mean","texture_mean","perimeter_mean","area_mean","smoothness_mean",
+                     "compactness_mean","concavity_mean","concave_points_mean","symmetry_mean","fractal_dimension_mean",
+                     "radius_se","texture_se","perimeter_se","area_se","smoothness_se","compactness_se","concavity_se",
+                     "concave_points_se","symmetry_se","fractal_dimension_se","radius_worst","texture_worst","perimeter_worst",
+                     "area_worst","smoothness_worst","compactness_worst","concavity_worst","concave_points_worst","symmetry_worst","fractal_dimension_worst")
+    data=data[,-1]       # remove ID's
+    classes=data[,1]
+    data=data[,-1]      # take out class (2)
+    params=NULL
+    X=data; Y=classes
+  } else if(dataset=="YEAST"){  # 1484 x 8
+    data <- read.table(url("https://archive.ics.uci.edu/ml/machine-learning-databases/yeast/yeast.data"),header=FALSE)
+    colnames(data)=c("sequence_name","mcg","gvh","alm","mit","erl","pox","vac","nuc","class")
+    data=data[,-1]   # remove sequence names
+    classes=data[,ncol(data)]
+    data=data[,-ncol(data)] # take out class (10)
+    params=NULL
+    X=data; Y=classes
+  } else if(dataset=="CONCRETE"){ # 1030 x 8
+    require(RCurl);require(gdata)
+    data <- read.xls("http://archive.ics.uci.edu/ml/machine-learning-databases/concrete/compressive/Concrete_Data.xls")
+    classes=data[,ncol(data)]
+    data=data[,-ncol(data)] # take out class: here it's continuous
+    params=NULL
+    X=data; Y=classes
+  } else if(dataset=="BANKNOTE"){ # 1372 x 4
+    data <- read.csv(url("https://archive.ics.uci.edu/ml/machine-learning-databases/00267/data_banknote_authentication.txt"),header=FALSE)
+    classes=data[,ncol(data)]
+    data=data[,-ncol(data)] # take out class (2)
+    params=NULL
+    X=data; Y=classes
+  } else if(dataset=="SHUTTLE"){
+    data <- read.table(url("https://archive.ics.uci.edu/ml/machine-learning-databases/statlog/shuttle/shuttle.tst"),header=FALSE, sep=" ")
+    classes=data[,ncol(data)]
+    data=data[,-ncol(data)]
+    params=NULL
+    X=data; Y=classes
+  } else if(dataset=="SHUTTLE2"){
+    data <- read.table(url("https://archive.ics.uci.edu/ml/machine-learning-databases/statlog/shuttle/shuttle.tst"),header=FALSE, sep=" ")
+    data = data[data$V10 %in%c(1,4,5),]  # remove classes 2, 3, 6, 7: with 13, 39, 4, and 2 observations only
+    classes=data[,ncol(data)]
+    data=data[,-ncol(data)]
+    params=NULL
+    X=data; Y=classes
+  } else if(dataset=="LETTER"){
+    data <- read.table(url("https://archive.ics.uci.edu/ml/machine-learning-databases/letter-recognition/letter-recognition.data"),header=FALSE, sep=",")
+    colnames(data) = c("lettr","x-box","y-box","width","high",
+                       "onpix","x-bar","y-bar","x2bar","y2bar",
+                       "xybar","x2ybr","xy2br","x-ege","xegvy",
+                       "y-ege","yegvx")
+    classes=data[,1]
+    data = data[,-1]
+    params=NULL
+    X=data; Y=classes
+  } else if(dataset=="DRYBEAN"){
+    data = read.csv("./data/DryBeanDataset/Dry_Bean_Dataset.csv")
+    classes=data[,ncol(data)]
+    data=data[,-ncol(data)]
+    params=NULL
+    X=data; Y=classes   # categorical
+  } else if(dataset=="CAREVALUATION"){
+    data <- read.table(url("https://archive.ics.uci.edu/ml/machine-learning-databases/car/car.data"),header=FALSE, sep=",")
+    for(c in 1:ncol(data)){
+      data[,c] = as.numeric(as.factor(data[,c]))
+    }
+    colnames(data) = c("buying","maint","doors","persons","lug_boot","safety","class")
+    classes=data[,ncol(data)]
+    data=data[,-ncol(data)]
+    params=NULL
+    X=data; Y=classes   # categorical
+  } else if(dataset=="RAISIN"){
+    data = xlsx::read.xlsx("./data/Raisin_Dataset/Raisin_Dataset.xlsx",sheetIndex = 1)
+    classes=data[,ncol(data)]
+    data=data[,-ncol(data)]
+    params=NULL
+    X=data; Y=classes   # categorical
+  } else if(dataset=="ABALONE"){
+    data <- read.table(url("https://archive.ics.uci.edu/ml/machine-learning-databases/abalone/abalone.data"),header=FALSE, sep=",")
+    colnames(data)=c("sex","length","diameter","height","wholeweight","shuckedweight","visceraweight","shellweight","rings")
+    data[,1] = as.numeric(as.factor(data[,1]))  # gender: female, male, or infant
+    classes=data[,ncol(data)]
+    data=data[,-ncol(data)]
+    params=NULL
+    X=data; Y=classes   # categorical
+  } else if(grepl("SIM",dataset)){
+  
+    X = matrix(nrow=N, ncol=P)
     set.seed(seed)
-    H=64
     
-    ## skew-normal X2
-    # Z1 = MASS::mvrnorm(N, rep(0,D), Sigma=diag(D))
-    # Z2 = MASS::mvrnorm(N, rep(0,D), Sigma=diag(D))
-    Z = MASS::mvrnorm(N, rep(0,D), Sigma=diag(D))
+    P_real=sum(data_types_x=="real"); P_cat=sum(data_types_x=="cat"); P_count=sum(data_types_x=="count"); P_pos=sum(data_types_x=="pos")
     
-    generate_nonlinear_data = function(Z,H,type=c("real","cat","count","pos"), P_type, C=NULL){
-      ### tests:
-      # type="real"; P_type=5; C=NULL
-      # type="cat"; P_type=5; C=3
-      # type="count"; P_type=5; C=NULL
-      # type="pos"; P_type=5; C=NULL
-      ############
-      N = nrow(Z); D = ncol(Z)
-      if(type %in% c("real", "count","pos")){P0 = P_type} else if(type =="cat"){ P0 = C*P_type}
-      # W1 = matrix(runif(D*floor(P0/2),0,1),nrow=D,ncol=floor(P0/2)) # weights
-      # W2 = matrix(runif(D*(P0-floor(P0/2)),0,1),nrow=D,ncol=P0-floor(P0/2)) # weights      # B = matrix(rnorm(N*P,0,0.25),nrow=N,ncol=P_type)
+    ## Using Linear/Nonlinear like P2
+    X = matrix(nrow=N, ncol=P)
+    Ws = list(); Bs = list()  # save these weights/biases in generation of X from Z
+    if(NL_x){
       
+      # N=100000; P=25; seed=9*sim_index
+      set.seed(seed)
+      H=64
       
-      W1 = if(type=="cat"){
-        matrix(3*sample(c(-1,1),size=D*H,replace=T),nrow=D,ncol=H)
-      }else{
-        matrix(rnorm(D*H,0,0.5),nrow=D,ncol=H)
-      }
-      W2 = if(type=="cat"){
-        matrix(3*sample(c(-1,1),size=H*P0,replace=T),nrow=H,ncol=P0)
-      }else{
-        matrix(rnorm(H*P0,0,0.5),nrow=H,ncol=P0)
-      }
+      ## skew-normal X2
+      # Z1 = MASS::mvrnorm(N, rep(0,D), Sigma=diag(D))
+      # Z2 = MASS::mvrnorm(N, rep(0,D), Sigma=diag(D))
+      Z = MASS::mvrnorm(N, rep(0,D), Sigma=diag(D))
       
-      B = matrix(rnorm(N*P0,0,1),nrow=N,ncol=P0)
-      # B1 = matrix(rnorm(N*P0,0,1),nrow=N,ncol=H)
-      # B2 = matrix(rnorm(N*P0,0,1),nrow=N,ncol=P0)
-      # B0 = 0 #location shift?
-      B0 = 10
-      
-      # eta = qrnn::elu(Z %*% W1 + B1) %*% W2 + B2
-      eta = qrnn::elu(Z %*% W1) %*% W2 + B
-      eta = apply(eta,2,function(x){(x-mean(x))/sd(x)})  # pre-normalize to mean 0
-      eta = eta + B0  # add location shift
-      
-      # eta = Z %*% W
-      if(type=="real"){
-        X = eta  # if B matrix (noise) is applied to eta
-      }else if(type=="cat"){
-        X = matrix(nrow=N,ncol=0)
-        for(j in 1:P_type){
-          eta0 = eta[,(C*(j-1)+1):(C*j)]  # subset relevant C columns of linear transformation from Z
-          probs = t(apply(eta0, 1, function(x) softmax(x)))
-          classes = apply(eta0, 1, function(x){which.max(rmultinom(1,1,softmax(x)))}) # eta0 --> softmax probs --> multinom --> designate class
-          X = cbind(X, classes)
+      generate_nonlinear_data = function(Z,H,type=c("real","cat","count","pos"), P_type, C=NULL){
+        ### tests:
+        # type="real"; P_type=5; C=NULL
+        # type="cat"; P_type=5; C=3
+        # type="count"; P_type=5; C=NULL
+        # type="pos"; P_type=5; C=NULL
+        ############
+        N = nrow(Z); D = ncol(Z)
+        if(type %in% c("real", "count","pos")){P0 = P_type} else if(type =="cat"){ P0 = C*P_type}
+        # W1 = matrix(runif(D*floor(P0/2),0,1),nrow=D,ncol=floor(P0/2)) # weights
+        # W2 = matrix(runif(D*(P0-floor(P0/2)),0,1),nrow=D,ncol=P0-floor(P0/2)) # weights      # B = matrix(rnorm(N*P,0,0.25),nrow=N,ncol=P_type)
+        
+        
+        W1 = if(type=="cat"){
+          matrix(3*sample(c(-1,1),size=D*H,replace=T),nrow=D,ncol=H)
+        }else{
+          matrix(rnorm(D*H,0,0.5),nrow=D,ncol=H)
         }
-      }else if(type=="count"){
-        X = matrix(rpois(N*P_type, eta+100), N, P_type)  # add constant of 100 to lambda --> larger counts
-      }else if(type=="pos"){
-        X = matrix(rlnorm(N*P_type, eta, 0.1), N, P_type) # log-sd changed to have range of about 0 - 80
-      }
-      # return(list(X=X,W=list(W1=W1,W2=W2),B=list(B0=B0,B1=B1,B2=B2)))
-      return(list(X=X,W=list(W1=W1,W2=W2),B=B))
-      
-    }
-    
-    # W1 = matrix(runif(D*floor(P/2),0,1),nrow=D,ncol=floor(P/2)) # weights
-    # W2 = matrix(runif(D*(P-floor(P/2)),0,1),nrow=D,ncol=P-floor(P/2)) # weights
-    # 
-    # X1 = matrix(rnorm(N*floor(P/2), 10*qrnn::sigmoid(Z2%*%W1), sd = 0.25), nrow=N, ncol=floor(P/2))
-    # X2 = matrix(rnorm(N*(P-ncol(X1)), 5*(cos(Z1%*%W2) + qrnn::sigmoid(Z2%*%W2)), sd = 0.25), nrow=N, ncol=P-ncol(X1))
-    # 
-    # X=cbind(X1,X2)
-    
-    if(P_real>0){ 
-      fit = generate_nonlinear_data(Z=Z, H=H, type="real", P_type=P_real, C=NULL)
-      X[,data_types=="real"] = fit$X
-    }
-    if(P_cat>0){
-      fit = generate_nonlinear_data(Z=Z, H=H, type="cat", P_type=P_cat, C=NULL)
-      X[,data_types=="cat"] = fit$X
-    }
-    if(P_count>0){
-      fit = generate_nonlinear_data(Z=Z, H=H, type="count", P_type=P_count, C=NULL)
-      X[,data_types=="count"] = fit$X
-    }
-    if(P_pos>0){
-      fit = generate_nonlinear_data(Z=Z, H=H, type="pos", P_type=P_pos, C=NULL)
-      X[,data_types=="pos"] = fit$X
-    }
-    
-  }else{
-    set.seed(seed)
-    Z=matrix(nrow=N,ncol=D)
-    for(d in 1:D){
-      Z[,d]=rnorm(N,mean=0,sd=1)
-    }
-    
-    generate_linear_data = function(Z,type=c("real","cat","count","pos"), P_type, C=NULL){
-      # ### tests:
-      # type="real"; P_type=5; C=NULL
-      # type="cat"; P_type=1; C=3
-      # type="count"; P_type=5; C=NULL
-      # type="pos"; P_type=5; C=NULL
-      # ############
-      N = nrow(Z); D = ncol(Z)
-      if(type %in% c("real", "count","pos")){
-        P0 = P_type
-      } else if(type =="cat"){
-        P0 = C*P_type
-      }
-      W = if(type=="cat"){
-        # matrix(3*c(-1,-1,-1,
-        #            1,1,1),nrow=D,ncol=P0)
-        matrix(3*sample(c(-1,1),size=D*P0,replace=T),nrow=D,ncol=P0)
-        ## ord:
-        # matrix(runif(D*P0,0,1),nrow=D,ncol=P0) 
-      }else{
-        # matrix(sample(c(-1,1),D*P0,replace=T)*runif(D*P0,0.5,2),nrow=D,ncol=P0)  # unif (1,2) and +/- random
-        # matrix(sample(c(-1,1),D*P0,replace=T)*runif(D*P0,0.5,1),nrow=D,ncol=P0)  # unif (1,2) and +/- random
-        # matrix(rnorm(D*P0,0,1),nrow=D,ncol=P0) 
-        matrix(rnorm(D*P0,0,0.5),nrow=D,ncol=P0)
-      }
-      
-      # B = matrix(rnorm(N*P0,0,0.25),nrow=N,ncol=P0)
-      B = matrix(rnorm(N*P0,0,1),nrow=N,ncol=P0)
-      # B0 = 0 #location shift?
-      B0 = 2 ### maybe change this shift to 10
-      
-      eta = Z %*% W + B
-      eta = apply(eta,2,function(x){(x-mean(x))/sd(x)})  # pre-normalize
-      eta = eta + B0  # add location shift
-      
-      # eta = Z %*% W
-      if(type=="real"){
-        # X = matrix(rnorm(N*P_type, eta, 0.25), N, P_type)
-        X = eta  # if B matrix (noise) is applied to eta
-        # X = apply(eta, 2, function(x) (x-mean(x))/sd(x))    # make it mean 0 sd 1
-      }else if(type=="cat"){
-        X = matrix(nrow=N,ncol=0)
-        for(j in 1:P_type){
-          eta0 = eta[,(C*(j-1)+1):(C*j)]  # subset relevant C columns of linear transformation from Z
-          probs = t(apply(eta0, 1, function(x) softmax(x)))
-          classes = apply(eta0, 1, function(x){which.max(rmultinom(1,1,softmax(x)))}) # eta0 --> softmax probs --> multinom --> designate class
-          X = cbind(X, classes)
+        W2 = if(type=="cat"){
+          matrix(3*sample(c(-1,1),size=H*P0,replace=T),nrow=H,ncol=P0)
+        }else{
+          matrix(rnorm(H*P0,0,0.5),nrow=H,ncol=P0)
         }
         
-        ## ORD SIM (mimicking ordsample() from GenOrd package)
-        # Sigma = diag(P_type); Sigma[Sigma==0] = 0.5
-        # # eig=eigen(Sigma,symmetric=T)
-        # # sqrteigval = diag(sqrt(eig$values),nrow=nrow(Sigma),ncol=ncol(Sigma))
-        # # eigvec <- eig$vectors
-        # # fry <- eigvec %*% sqrteigval
-        # # 
-        # # X <- matrix(rnorm(P_type * N), N)
-        # # X <- scale(X, TRUE, FALSE)
-        # # X <- X %*% svd(X, nu = 0)$v
-        # # X <- scale(X, FALSE, TRUE)
-        # # X <- fry %*% t(X)
-        # # X <- t(X)        ## https://github.com/AFialkowski/SimMultiCorrData/blob/master/R/rcorrvar.R see Y_cat?
-        # 
-        # marginal=list(); support=list()
-        # for(i in 1:P_type){
-        #   marginal[[i]] = c(1:(C-1))/C
-        #   support[[i]] = 1:C   # can be different Cs across variables, but keep it constant for now
-        # }
-        # # draw = matrix(MASS::mvrnorm(N*P_type, rep(0,P_type), Sigma), nrow=N, ncol=P_type)
-        # # draw = matrix(rnorm(N*P_type, eta, Sigma), nrow=N, ncol=P_type)
-        # draw = eta
-        # X = matrix(nrow=N,ncol=P_type)
-        # for(i in 1:P_type){
-        #   X[,i] = as.integer(cut(draw[,i], breaks=c(min(draw[,i])-1, qnorm(marginal[[i]]), max(draw[,i])+1)))
-        #   X[,i] = support[[i]][X[,i]]
-        # }
+        B = matrix(rnorm(N*P0,0,1),nrow=N,ncol=P0)
+        # B1 = matrix(rnorm(N*P0,0,1),nrow=N,ncol=H)
+        # B2 = matrix(rnorm(N*P0,0,1),nrow=N,ncol=P0)
+        # B0 = 0 #location shift?
+        B0 = 10
         
-      }else if(type=="count"){
-        X = matrix(rpois(N*P_type, eta+100), N, P_type)  # add constant of 100 to lambda --> larger counts
-      }else if(type=="pos"){
-        X = matrix(rlnorm(N*P_type, eta, 0.1), N, P_type) # log-sd changed to have range of about 0 - 80
-      }
-      return(list(X=X,W=W,B=list(B0=B0,B=B)))
-    }
-    
-    if(P_real>0){
-      fit = generate_linear_data(Z=Z, type="real", P_type=P_real, C=NULL)
-      X[,data_types=="real"] = fit$X; Ws$"real" = fit$W; Bs$"real" = fit$B }
-    if(P_cat>0){
-      fit = generate_linear_data(Z=Z, type="cat", P_type=P_cat, C=C)
-      X[,data_types=="cat"] = fit$X; Ws$"cat" = fit$W; Bs$"cat" = fit$B }
-    if(P_count>0){ 
-      fit = generate_linear_data(Z=Z, type="count", P_type=P_count, C=NULL)
-      X[,data_types=="count"] = fit$X; Ws$"count" = fit$W; Bs$"count" = fit$B}
-    if(P_pos>0){ 
-      fit = generate_linear_data(Z=Z, type="pos", P_type=P_pos, C=NULL)
-      X[,data_types=="pos"] = fit$X; Ws$"pos" = fit$W; Bs$"pos" = fit$B}
-    
-  }
-
-  
-  if(family=="Multinomial"){ 
-    beta1 = matrix(0, ncol=1, nrow=P_real+P_count+P_cat)  # class 1: reference. effects of X on Pr(Y) are 0
-    betas_real = matrix(sample(c(-1*beta, beta), P_real*(Cy-1), replace=T),nrow=P_real,ncol=Cy-1)
-    # (most proper:  for cat vars: diff effect per level. not doing this right now --> same effect from 1 --> 2, 2 --> 3, etc.)
-    # betas_count = sample(c(-beta/600, beta/600), P_count, replace=T)      # effect is twice the magnitude of the effect of continuous values?
-    # betas_cat = sample(c(-2*beta, 2*beta), P_cat, replace=T)       # mean(cts) = 5, mean(cat) = 2, mean(count) = exp(8) ~ 2981
-    betas_count = matrix(sample(c(-1*beta, beta), P_count*(Cy-1), replace=T),nrow=P_count,ncol=Cy-1)      # effect is twice the magnitude of the effect of continuous values?
-    
-    betas_cat = matrix(sample(c(-2*beta, 2*beta), P_cat*(Cy-1), replace=T), nrow=P_cat, ncol=Cy-1)
-    betas = cbind(beta1, rbind(betas_real, betas_cat, betas_count))
-    epsilon = matrix(rnorm(N*(Cy-1), 0, 0.1), nrow=N,ncol=Cy)
-    
-    
-    betas2_real = matrix(sample(c(-1*beta, beta), P_real*(Cy-1), replace=T),nrow=P_real,ncol=Cy-1)
-    betas2_count = matrix(sample(c(-1*beta, beta), P_count*(Cy-1), replace=T),nrow=P_count,ncol=Cy-1)      # effect is twice the magnitude of the effect of continuous values?
-    betas2_cat = matrix(sample(c(-2*beta, 2*beta), P_cat*(Cy-1), replace=T), nrow=P_cat, ncol=Cy-1)
-    
-    betas2 = cbind(beta1, rbind(betas2_real, betas2_cat, betas2_count))
-    
-  } else{ 
-    betas_real = sample(c(-1*beta, beta), P_real, replace=T)
-    # (most proper:  for cat vars: diff effect per level. not doing this right now --> same effect from 1 --> 2, 2 --> 3, etc.)
-    # betas_count = sample(c(-beta/600, beta/600), P_count, replace=T)      # effect is twice the magnitude of the effect of continuous values?
-    # betas_cat = sample(c(-2*beta, 2*beta), P_cat, replace=T)       # mean(cts) = 5, mean(cat) = 2, mean(count) = exp(8) ~ 2981
-    betas_count = sample(c(-1*beta, beta), P_count, replace=T)      # effect is twice the magnitude of the effect of continuous values?
-    betas_cat = sample(c(-2*beta, 2*beta), P_cat, replace=T)
-    betas = c(betas_real, betas_cat, betas_count)
-    epsilon = rnorm(N, 0, 0.1)
-    
-    betas2_real = sample(c(-4*beta, beta), P_real, replace=T)
-    betas2_count = sample(c(-4*beta, beta), P_count, replace=T)      # effect is twice the magnitude of the effect of continuous values?
-    betas2_cat = sample(c(-8*beta, 8*beta), P_cat, replace=T)
-    betas2 = c(betas2_real, betas2_cat, betas2_count)
-  } # mean(cts) = 5, mean(cat) = 2, mean(count) = exp(8) ~ 2981
-  
-  # epsilon = 0
-  if(NL_y){
-    ##### covariates of Y are X^2
-    if(family=="Gaussian"){
-      # Simulate y from X --> y = Xb + e
-      beta0s = 0
-      # eta = beta0s + X^2 %*% betas + epsilon
-      eta = beta0s + X^2 %*% betas + log(X + abs(min(X)) + 0.001) %*% betas2 + epsilon
-      Y = eta
-      prs = NA
-    } else if(family=="Multinomial"){
-      beta0s = 0
-      # eta = beta0s + X^2 %*% betas + epsilon
-      eta = beta0s + X^2 %*% betas + log(X + abs(min(X)) + 0.001) %*% betas2 + epsilon
-      prs = t(apply(eta,1,softmax))
-      Y = apply(prs, 1, function(x) which.max(rmultinom(1, 1, x)))  # categorical distribution
-      
-      # Y = rbinom(N,1,prs)  # for binary outcome only
-    } else if(family=="Poisson"){
-      beta0s = 8
-      # eta = beta0s + X^2 %*% betas + epsilon
-      eta = beta0s + X^2 %*% betas + log(X + abs(min(X)) + 0.001) %*% betas2 + epsilon
-      Y = round(exp(eta),0)   # log(Y) = eta. Round Y to integer (to simulate count)
-      prs = NA
-    }
-  }else{
-    ##### covariates for Y are X
-    # family="Gaussian" --> Gaussian data for Y
-    if(family=="Gaussian"){
-      # Simulate y from X --> y = Xb + e
-      beta0s = 0
-      eta = beta0s + X %*% betas + epsilon
-      # betas = sample(c(-1*beta,beta), P, replace=T)   # defined together in mixed data types
-      Y = eta
-      prs = NA
-    } else if(family=="Multinomial"){
-      
-      ### I THINK THIS WORKS FOR LOGISTIC REGRESSION, NOT FOR MULTINOMIAL
-      find_int = function(p,betas) {
-        # Define a path through parameter space
-        f = function(t){
-          sapply(t, function(y) mean(1 / (1 + exp(-y -as.matrix(X) %*% betas))))
+        # eta = qrnn::elu(Z %*% W1 + B1) %*% W2 + B2
+        eta = qrnn::elu(Z %*% W1) %*% W2 + B
+        eta = apply(eta,2,function(x){(x-mean(x))/sd(x)})  # pre-normalize to mean 0
+        eta = eta + B0  # add location shift
+        
+        # eta = Z %*% W
+        if(type=="real"){
+          X = eta  # if B matrix (noise) is applied to eta
+        }else if(type=="cat"){
+          X = matrix(nrow=N,ncol=0)
+          for(j in 1:P_type){
+            eta0 = eta[,(C*(j-1)+1):(C*j)]  # subset relevant C columns of linear transformation from Z
+            probs = t(apply(eta0, 1, function(x) softmax(x)))
+            classes = apply(eta0, 1, function(x){which.max(rmultinom(1,1,softmax(x)))}) # eta0 --> softmax probs --> multinom --> designate class
+            X = cbind(X, classes)
+          }
+        }else if(type=="count"){
+          X = matrix(rpois(N*P_type, eta+100), N, P_type)  # add constant of 100 to lambda --> larger counts
+        }else if(type=="pos"){
+          X = matrix(rlnorm(N*P_type, eta, 0.1), N, P_type) # log-sd changed to have range of about 0 - 80
         }
-        alpha <- uniroot(function(t) f(t) - p, c(-1e6, 1e6), tol = .Machine$double.eps^0.5)$root
-        return(alpha)
+        # return(list(X=X,W=list(W1=W1,W2=W2),B=list(B0=B0,B1=B1,B2=B2)))
+        return(list(X=X,W=list(W1=W1,W2=W2),B=B))
+        
       }
-      beta0s <- sapply(c(0.5), function(y)find_int(y,betas[,2]))
       
-      eta = beta0s + X %*% betas + epsilon
+      # W1 = matrix(runif(D*floor(P/2),0,1),nrow=D,ncol=floor(P/2)) # weights
+      # W2 = matrix(runif(D*(P-floor(P/2)),0,1),nrow=D,ncol=P-floor(P/2)) # weights
+      # 
+      # X1 = matrix(rnorm(N*floor(P/2), 10*qrnn::sigmoid(Z2%*%W1), sd = 0.25), nrow=N, ncol=floor(P/2))
+      # X2 = matrix(rnorm(N*(P-ncol(X1)), 5*(cos(Z1%*%W2) + qrnn::sigmoid(Z2%*%W2)), sd = 0.25), nrow=N, ncol=P-ncol(X1))
+      # 
+      # X=cbind(X1,X2)
       
-      inv_logit = function(x){
-        return(1/(1+exp(-x)))
+      if(P_real>0){ 
+        fit = generate_nonlinear_data(Z=Z, H=H, type="real", P_type=P_real, C=NULL)
+        X[,data_types_x=="real"] = fit$X
       }
-      prs = inv_logit(eta[,2])
-      Y = rbinom(N, 1, prs)  # for binary outcome only
-      ## transform prs into what it should have been (reference: 1st class)
-      prs0 = cbind(1-prs, prs)
-      prs = prs0
+      if(P_cat>0){
+        fit = generate_nonlinear_data(Z=Z, H=H, type="cat", P_type=P_cat, C=NULL)
+        X[,data_types_x=="cat"] = fit$X
+      }
+      if(P_count>0){
+        fit = generate_nonlinear_data(Z=Z, H=H, type="count", P_type=P_count, C=NULL)
+        X[,data_types_x=="count"] = fit$X
+      }
+      if(P_pos>0){
+        fit = generate_nonlinear_data(Z=Z, H=H, type="pos", P_type=P_pos, C=NULL)
+        X[,data_types_x=="pos"] = fit$X
+      }
       
-      #### MULTINOMIAL. NEED TO FIX beta0s TO HAVE CLASSES ~ N/C expected per class (see above for LR). NEED TO CHANGE EVENTUALLY.
-      # beta0s = 0     # makes class too unbalanced...
-      # eta = beta0s + X %*% betas + epsilon
-      # prs = t(apply(eta,1,softmax))
-      # Y = apply(prs, 1, function(x) which.max(rmultinom(1, 1, x)))  # categorical distribution
+    }else{
+      set.seed(seed)
+      Z=matrix(nrow=N,ncol=D)
+      for(d in 1:D){
+        Z[,d]=rnorm(N,mean=0,sd=1)
+      }
       
-    } else if(family=="Poisson"){
-      beta0s = 8
-      eta = beta0s + X %*% betas + epsilon
-      # betas = sample(c(-1*beta,beta), P, replace=T)    # defined together in mixed data types
-      Y = round(exp(eta),0)   # log(Y) = eta. Round Y to integer (to simulate count)
-      prs = NA
+      generate_linear_data = function(Z,type=c("real","cat","count","pos"), P_type, C=NULL){
+        # ### tests:
+        # type="real"; P_type=5; C=NULL
+        # type="cat"; P_type=1; C=3
+        # type="count"; P_type=5; C=NULL
+        # type="pos"; P_type=5; C=NULL
+        # ############
+        N = nrow(Z); D = ncol(Z)
+        if(type %in% c("real", "count","pos")){
+          P0 = P_type
+        } else if(type =="cat"){
+          P0 = C*P_type
+        }
+        W = if(type=="cat"){
+          # matrix(3*c(-1,-1,-1,
+          #            1,1,1),nrow=D,ncol=P0)
+          matrix(3*sample(c(-1,1),size=D*P0,replace=T),nrow=D,ncol=P0)
+          ## ord:
+          # matrix(runif(D*P0,0,1),nrow=D,ncol=P0) 
+        }else{
+          # matrix(sample(c(-1,1),D*P0,replace=T)*runif(D*P0,0.5,2),nrow=D,ncol=P0)  # unif (1,2) and +/- random
+          # matrix(sample(c(-1,1),D*P0,replace=T)*runif(D*P0,0.5,1),nrow=D,ncol=P0)  # unif (1,2) and +/- random
+          # matrix(rnorm(D*P0,0,1),nrow=D,ncol=P0) 
+          matrix(rnorm(D*P0,0,0.5),nrow=D,ncol=P0)
+        }
+        
+        # B = matrix(rnorm(N*P0,0,0.25),nrow=N,ncol=P0)
+        B = matrix(rnorm(N*P0,0,1),nrow=N,ncol=P0)
+        # B0 = 0 #location shift?
+        B0 = 2 ### maybe change this shift to 10
+        
+        eta = Z %*% W + B
+        eta = apply(eta,2,function(x){(x-mean(x))/sd(x)})  # pre-normalize
+        eta = eta + B0  # add location shift
+        
+        # eta = Z %*% W
+        if(type=="real"){
+          # X = matrix(rnorm(N*P_type, eta, 0.25), N, P_type)
+          X = eta  # if B matrix (noise) is applied to eta
+          # X = apply(eta, 2, function(x) (x-mean(x))/sd(x))    # make it mean 0 sd 1
+        }else if(type=="cat"){
+          X = matrix(nrow=N,ncol=0)
+          for(j in 1:P_type){
+            eta0 = eta[,(C*(j-1)+1):(C*j)]  # subset relevant C columns of linear transformation from Z
+            probs = t(apply(eta0, 1, function(x) softmax(x)))
+            classes = apply(eta0, 1, function(x){which.max(rmultinom(1,1,softmax(x)))}) # eta0 --> softmax probs --> multinom --> designate class
+            X = cbind(X, classes)
+          }
+          
+          ## ORD SIM (mimicking ordsample() from GenOrd package)
+          # Sigma = diag(P_type); Sigma[Sigma==0] = 0.5
+          # # eig=eigen(Sigma,symmetric=T)
+          # # sqrteigval = diag(sqrt(eig$values),nrow=nrow(Sigma),ncol=ncol(Sigma))
+          # # eigvec <- eig$vectors
+          # # fry <- eigvec %*% sqrteigval
+          # # 
+          # # X <- matrix(rnorm(P_type * N), N)
+          # # X <- scale(X, TRUE, FALSE)
+          # # X <- X %*% svd(X, nu = 0)$v
+          # # X <- scale(X, FALSE, TRUE)
+          # # X <- fry %*% t(X)
+          # # X <- t(X)        ## https://github.com/AFialkowski/SimMultiCorrData/blob/master/R/rcorrvar.R see Y_cat?
+          # 
+          # marginal=list(); support=list()
+          # for(i in 1:P_type){
+          #   marginal[[i]] = c(1:(C-1))/C
+          #   support[[i]] = 1:C   # can be different Cs across variables, but keep it constant for now
+          # }
+          # # draw = matrix(MASS::mvrnorm(N*P_type, rep(0,P_type), Sigma), nrow=N, ncol=P_type)
+          # # draw = matrix(rnorm(N*P_type, eta, Sigma), nrow=N, ncol=P_type)
+          # draw = eta
+          # X = matrix(nrow=N,ncol=P_type)
+          # for(i in 1:P_type){
+          #   X[,i] = as.integer(cut(draw[,i], breaks=c(min(draw[,i])-1, qnorm(marginal[[i]]), max(draw[,i])+1)))
+          #   X[,i] = support[[i]][X[,i]]
+          # }
+          
+        }else if(type=="count"){
+          X = matrix(rpois(N*P_type, eta+100), N, P_type)  # add constant of 100 to lambda --> larger counts
+        }else if(type=="pos"){
+          X = matrix(rlnorm(N*P_type, eta, 0.1), N, P_type) # log-sd changed to have range of about 0 - 80
+        }
+        return(list(X=X,W=W,B=list(B0=B0,B=B)))
+      }
+      
+      if(P_real>0){
+        fit = generate_linear_data(Z=Z, type="real", P_type=P_real, C=NULL)
+        X[,data_types_x=="real"] = fit$X; Ws$"real" = fit$W; Bs$"real" = fit$B }
+      if(P_cat>0){
+        fit = generate_linear_data(Z=Z, type="cat", P_type=P_cat, C=C)
+        X[,data_types_x=="cat"] = fit$X; Ws$"cat" = fit$W; Bs$"cat" = fit$B }
+      if(P_count>0){ 
+        fit = generate_linear_data(Z=Z, type="count", P_type=P_count, C=NULL)
+        X[,data_types_x=="count"] = fit$X; Ws$"count" = fit$W; Bs$"count" = fit$B}
+      if(P_pos>0){ 
+        fit = generate_linear_data(Z=Z, type="pos", P_type=P_pos, C=NULL)
+        X[,data_types_x=="pos"] = fit$X; Ws$"pos" = fit$W; Bs$"pos" = fit$B}
+      
     }
+  
+    
+    if(family=="Multinomial"){ 
+      beta1 = matrix(0, ncol=1, nrow=P_real+P_count+P_cat)  # class 1: reference. effects of X on Pr(Y) are 0
+      betas_real = matrix(sample(c(-1*beta, beta), P_real*(Cy-1), replace=T),nrow=P_real,ncol=Cy-1)
+      # (most proper:  for cat vars: diff effect per level. not doing this right now --> same effect from 1 --> 2, 2 --> 3, etc.)
+      # betas_count = sample(c(-beta/600, beta/600), P_count, replace=T)      # effect is twice the magnitude of the effect of continuous values?
+      # betas_cat = sample(c(-2*beta, 2*beta), P_cat, replace=T)       # mean(cts) = 5, mean(cat) = 2, mean(count) = exp(8) ~ 2981
+      betas_count = matrix(sample(c(-1*beta, beta), P_count*(Cy-1), replace=T),nrow=P_count,ncol=Cy-1)      # effect is twice the magnitude of the effect of continuous values?
+      
+      betas_cat = matrix(sample(c(-2*beta, 2*beta), P_cat*(Cy-1), replace=T), nrow=P_cat, ncol=Cy-1)
+      betas = cbind(beta1, rbind(betas_real, betas_cat, betas_count))
+      
+      # select_betas = sample(c(1,0),P,replace=T,prob=c(0.5,0.5))
+      select_betas = 1
+      betas[,-1] = betas[,-1] * select_betas       # select 20% of betas to be nonzero (larger coefs)
+      print(betas)
+      
+      epsilon = matrix(rnorm(N*(Cy-1), 0, 0.1), nrow=N,ncol=Cy)
+      
+      betas2_real = matrix(sample(c(-1*beta, beta), P_real*(Cy-1), replace=T),nrow=P_real,ncol=Cy-1)
+      betas2_count = matrix(sample(c(-1*beta, beta), P_count*(Cy-1), replace=T),nrow=P_count,ncol=Cy-1)      # effect is twice the magnitude of the effect of continuous values?
+      betas2_cat = matrix(sample(c(-2*beta, 2*beta), P_cat*(Cy-1), replace=T), nrow=P_cat, ncol=Cy-1)
+      
+      betas2 = cbind(beta1, rbind(betas2_real, betas2_cat, betas2_count))
+      
+    } else{ 
+      betas_real = sample(c(-1*beta, beta), P_real, replace=T)
+      # (most proper:  for cat vars: diff effect per level. not doing this right now --> same effect from 1 --> 2, 2 --> 3, etc.)
+      # betas_count = sample(c(-beta/600, beta/600), P_count, replace=T)      # effect is twice the magnitude of the effect of continuous values?
+      # betas_cat = sample(c(-2*beta, 2*beta), P_cat, replace=T)       # mean(cts) = 5, mean(cat) = 2, mean(count) = exp(8) ~ 2981
+      betas_count = sample(c(-1*beta, beta), P_count, replace=T)      # effect is twice the magnitude of the effect of continuous values?
+      betas_cat = sample(c(-2*beta, 2*beta), P_cat, replace=T)
+      betas = c(betas_real, betas_cat, betas_count)
+      epsilon = rnorm(N, 0, 0.1)
+      
+      betas2_real = sample(c(-4*beta, beta), P_real, replace=T)
+      betas2_count = sample(c(-4*beta, beta), P_count, replace=T)      # effect is twice the magnitude of the effect of continuous values?
+      betas2_cat = sample(c(-8*beta, 8*beta), P_cat, replace=T)
+      betas2 = c(betas2_real, betas2_cat, betas2_count)
+    } # mean(cts) = 5, mean(cat) = 2, mean(count) = exp(8) ~ 2981
+    
+    # epsilon = 0
+    if(NL_y){
+      ##### covariates of Y are X^2
+      if(family=="Gaussian"){
+        # Simulate y from X --> y = Xb + e
+        beta0s = 0
+        # eta = beta0s + X^2 %*% betas + epsilon
+        eta = beta0s + X^2 %*% betas + log(X + abs(min(X)) + 0.001) %*% betas2 + epsilon
+        Y = eta
+        prs = NA
+      } else if(family=="Multinomial"){
+        beta0s = 0
+        # eta = beta0s + X^2 %*% betas + epsilon
+        eta = beta0s + X^2 %*% betas + log(X + abs(min(X)) + 0.001) %*% betas2 + epsilon
+        prs = t(apply(eta,1,softmax))
+        Y = apply(prs, 1, function(x) which.max(rmultinom(1, 1, x)))  # categorical distribution
+        
+        # Y = rbinom(N,1,prs)  # for binary outcome only
+      } else if(family=="Poisson"){
+        beta0s = 8
+        # eta = beta0s + X^2 %*% betas + epsilon
+        eta = beta0s + X^2 %*% betas + log(X + abs(min(X)) + 0.001) %*% betas2 + epsilon
+        Y = round(exp(eta),0)   # log(Y) = eta. Round Y to integer (to simulate count)
+        prs = NA
+      }
+    }else{
+      ##### covariates for Y are X
+      # family="Gaussian" --> Gaussian data for Y
+      if(family=="Gaussian"){
+        # Simulate y from X --> y = Xb + e
+        beta0s = 0
+        eta = beta0s + X %*% betas + epsilon
+        # betas = sample(c(-1*beta,beta), P, replace=T)   # defined together in mixed data types
+        Y = eta
+        prs = NA
+      } else if(family=="Multinomial"){
+        
+        ### I THINK THIS WORKS FOR LOGISTIC REGRESSION, NOT FOR MULTINOMIAL
+        find_int = function(p,betas) {
+          # Define a path through parameter space
+          f = function(t){
+            sapply(t, function(y) mean(1 / (1 + exp(-y -as.matrix(X) %*% betas))))
+          }
+          alpha <- uniroot(function(t) f(t) - p, c(-1e6, 1e6), tol = .Machine$double.eps^0.5)$root
+          return(alpha)
+        }
+        beta0s <- sapply(c(0.5), function(y)find_int(y,betas[,2]))
+        
+        eta = beta0s + X %*% betas + epsilon
+        
+        inv_logit = function(x){
+          return(1/(1+exp(-x)))
+        }
+        prs = inv_logit(eta[,2])
+        Y = rbinom(N, 1, prs)  # for binary outcome only
+        ## transform prs into what it should have been (reference: 1st class)
+        prs0 = cbind(1-prs, prs)
+        prs = prs0
+        
+        #### MULTINOMIAL. NEED TO FIX beta0s TO HAVE CLASSES ~ N/C expected per class (see above for LR). NEED TO CHANGE EVENTUALLY.
+        # beta0s = 0     # makes class too unbalanced...
+        # eta = beta0s + X %*% betas + epsilon
+        # prs = t(apply(eta,1,softmax))
+        # Y = apply(prs, 1, function(x) which.max(rmultinom(1, 1, x)))  # categorical distribution
+        
+      } else if(family=="Poisson"){
+        beta0s = 8
+        eta = beta0s + X %*% betas + epsilon
+        # betas = sample(c(-1*beta,beta), P, replace=T)    # defined together in mixed data types
+        Y = round(exp(eta),0)   # log(Y) = eta. Round Y to integer (to simulate count)
+        prs = NA
+      }
+    }
+    Y = matrix(Y,ncol=1)
+    
+    # hist(Y)
+    
+    # X[,data_types_x=="count"] = exp(X[,data_types_x=="count"])    # undo log transf of X
+  
+    params = list(beta0s=beta0s, betas=betas, betas2=betas2, beta=beta, prs = prs, Ws=Ws, Bs=Bs)  # betas2 only used as a second covariate in NL_y (experimental)
   }
-  Y = matrix(Y,ncol=1)
-  
-  # hist(Y)
-  
-  # X[,data_types=="count"] = exp(X[,data_types=="count"])    # undo log transf of X
-
   data = list(X=X, Y=Y)
-  params = list(beta0s=beta0s, betas=betas, betas2=betas2, beta=beta, prs = prs, Ws=Ws, Bs=Bs)  # betas2 only used as a second covariate in NL_y (experimental)
-  
   return(list(data=data, params=params))
 }
 
@@ -449,43 +592,54 @@ simulateMask = function(data, scheme, mechanism, NL_r, pi, phis, miss_cols, ref_
               params=params))
 }
 
-# data.file.name=NULL; mask.file.name=NULL; sim.params = list(N=1e5, P=8, data_types=rep("real",P), family="Gaussian", sim_index=1); miss.params = list(scheme="UV", mechanism="MNAR", pi=0.5, phi0=5, miss_cols=NULL, ref_cols=NULL, sim_index=1); case="x"
-prepareData = function(data.file.name = NULL, mask.file.name=NULL,
-                       sim.params = list(N=1e5, D=2, P=8, data_types=NA, family="Gaussian", sim_index=1, ratios=c(train=.6,valid=.2,test=.2),
+# data.file.name=NULL; mask.file.name=NULL; sim.params = list(N=1e5, P=8, data_types_x=rep("real",P), family="Gaussian", sim_index=1); miss.params = list(scheme="UV", mechanism="MNAR", pi=0.5, phi0=5, miss_cols=NULL, ref_cols=NULL, sim_index=1); case="x"
+prepareData = function(dataset0 = "SIM", data.file.name = NULL, mask.file.name=NULL,
+                       sim.params = list(N=1e5, D=2, P=8, data_types_x=NA, family="Gaussian", sim_index=1, ratios=c(train=.8,valid=.1,test=.1),
                                          beta=.25, C=NULL, Cy=NULL, NL_x=F, NL_y=F),
                        miss.params = list(scheme="UV", mechanism="MNAR", pi=0.5, phi0=5, miss_pct_features=50, miss_cols=NULL, ref_cols=NULL, NL_r=F),
                        case=c("x","y","xy")){
   print(sim.params)
+  
+  if(grepl("SIM",dataset0)){
+    P=sim.params$P; N=sim.params$N
+    if(all(is.na(sim.params$data_types_x))){sim.params$data_types_x = rep("real",sim.params$P)}
+    dataset = sprintf("Xr%dct%dcat%d_beta%f_pi%d/SIM_N%d_P%d_D%d",sum(sim.params$data_types_x=="real"),
+                      sum(sim.params$data_types_x=="count"),sum(sim.params$data_types_x=="cat"), sim.params$beta, miss.params$pi*100,
+                      sim.params$N, sim.params$P, sim.params$D)
+    
+    data_type_x = if(all(sim.params$data_types_x==sim.params$data_types_x[1])){ sim.params$data_types_x[1] } else{ "mixed" }
+    data_type_y = if(sim.params$family=="Gaussian"){"real"}else if(sim.params$family=="Multinomial"){"cat"}else if(sim.params$family=="Poisson"){"cts"}
+    
+    iNL_x = if(sim.params$NL_x){"NL"}else{""}
+    iNL_y = if(sim.params$NL_y){"NL"}else{""}
+    iNL_r = if(miss.params$NL_r){"NL_"}else{""}
+    dir_name = sprintf("Results_%sX%s_%sY%s/%s/miss_%s%s/phi%d/sim%d", iNL_x, data_type_x, iNL_y, data_type_y, dataset, iNL_r, case, miss.params$phi0, sim.params$sim_index)
+  }else{
+    iNL_r = if(miss.params$NL_r){"NL_"}else{""}
+    dir_name = sprintf("Results_%s/miss_%s%s/phi%d/sim%d", dataset0, iNL_r, case, miss.params$phi0, sim.params$sim_index)
+  }
+  diag_dir_name = sprintf("%s/Diagnostics", dir_name)
+  ifelse(!dir.exists(dir_name), dir.create(dir_name,recursive=T), F)
+  ifelse(!dir.exists(diag_dir_name), dir.create(diag_dir_name,recursive=T), F)
+  
   # data (simulate or read)
   if(!is.null(data.file.name)){
     # read existing data. list object "data" should be there, with entries "X" and "Y"
     load(data.file.name)
-    dataset = unlist(strsplit(data.file.name,"[.]"))[1]   # remove extension
+    dataset0 = unlist(strsplit(data.file.name,"[.]"))[1]   # remove extension
   }else{
-    P=sim.params$P; N=sim.params$N
-    if(all(is.na(sim.params$data_types))){sim.params$data_types = rep("real",sim.params$P)}
     
-    # N=sim.params$N; P=sim.params$P
-    # data_types=sim.params$data_types
-    # family=sim.params$family
-    # seed=sim.params$sim_index*9
-    # mus=sim.params$mus; sds=sim.params$sds
-    # lambdas=sim.params$lambdas; probs=sim.params$probs
-    # beta=sim.params$beta; C=sim.params$C
-    
-    sim.data = simulateData(N=sim.params$N, D=sim.params$D, P=sim.params$P,
-                            data_types=sim.params$data_types,
+    sim.data = simulateData(dataset=dataset0, N=sim.params$N, D=sim.params$D, P=sim.params$P,
+                            data_types_x=sim.params$data_types_x,
                             family=sim.params$family, NL_x=sim.params$NL_x, NL_y=sim.params$NL_y,
                             seed=sim.params$sim_index*9,
                             beta=sim.params$beta, C=sim.params$C, Cy=sim.params$Cy)
     params = sim.data$params
-    dataset = sprintf("Xr%dct%dcat%d_beta%f_pi%d/SIM_N%d_P%d_D%d",sum(sim.params$data_types=="real"),
-                      sum(sim.params$data_types=="count"),sum(sim.params$data_types=="cat"), params$beta, miss.params$pi*100,
-                      sim.params$N, sim.params$P, sim.params$D)
     
     # family = "Gaussian", "Multinomial", or "Poisson"
     data = sim.data$data
     X=data$X; Y=data$Y
+    N = nrow(X); P = ncol(X)
   }
   
   print("Data simulated")
@@ -502,7 +656,7 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
     set.seed( sim.params$sim_index*9 )
     # phis = c(0, rlnorm(P, log(miss.params$phi0), 0.2)) # default: 0 for intercept, draw values of coefs from log-norm(5, 0.2)
     phis = rlnorm(P, log(miss.params$phi0), 0.2) # SHOULDN"T CONTAIN INTERCEPT... intercept found by critical point in E[R] ~ pi
-    if(any(sim.params$data_types=="cat")){ phis[sim.params$data_types=="cat"] = phis[sim.params$data_types=="cat"] * 2 } # categorical effects on missingness is 1/5th of real effects
+    if(grepl("SIM",dataset0)){  if(any(sim.params$data_types_x=="cat")){ phis[sim.params$data_types_x=="cat"] = phis[sim.params$data_types_x=="cat"] * 2 }  } # categorical effects on missingness is 1/5th of real effects
     # if no reference/miss cols provided --> randomly select 50% each
     if(is.null(miss.params$miss_cols) & is.null(miss.params$ref_cols)){
       # miss_cols = sample(1:P, floor(P/2), F); ref_cols = c(1:P)[-miss_cols]
@@ -544,17 +698,6 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
   }
   
   print("Mask simulated")
-  data_type_x = if(all(sim.params$data_types==sim.params$data_types[1])){ sim.params$data_types[1] } else{ "mixed" }
-  data_type_y = if(sim.params$family=="Gaussian"){"real"}else if(sim.params$family=="Multinomial"){"cat"}else if(sim.params$family=="Poisson"){"cts"}
-  
-  iNL_x = if(sim.params$NL_x){"NL"}else{""}
-  iNL_y = if(sim.params$NL_y){"NL"}else{""}
-  iNL_r = if(miss.params$NL_r){"NL_"}else{""}
-  dir_name = sprintf("Results_%sX%s_%sY%s/%s/miss_%s%s/phi%d/sim%d", iNL_x, data_type_x, iNL_y, data_type_y, dataset, iNL_r, case, miss.params$phi0, sim.params$sim_index)
-  ifelse(!dir.exists(dir_name), dir.create(dir_name,recursive=T), F)
-  
-  diag_dir_name = sprintf("%s/Diagnostics", dir_name)
-  ifelse(!dir.exists(diag_dir_name), dir.create(diag_dir_name,recursive=T), F)
   
   if(grepl("x",case)){
     # plot missing X vals (1 col)
@@ -590,8 +733,8 @@ prepareData = function(data.file.name = NULL, mask.file.name=NULL,
   miss.params$miss_cols = miss_cols; miss.params$ref_cols = ref_cols; miss.params$phis = phis
   
   g = sample(cut(
-    seq(sim.params$N), 
-    sim.params$N*cumsum(c(0,sim.params$ratios)),
+    seq(nrow(data)), 
+    nrow(data)*cumsum(c(0,sim.params$ratios)),
     labels = names(sim.params$ratios)
   ))
   
