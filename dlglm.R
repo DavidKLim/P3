@@ -36,6 +36,8 @@ dlglm = function(dir_name, X, Y, mask_x, mask_y, g, covars_r_x, covars_r_y, lear
   n_hidden_layers_y = hyperparams$n_hidden_layers_y; n_hidden_layers_r = hyperparams$n_hidden_layers_r; dim_zs = hyperparams$dim_zs
   L1_weights = hyperparams$L1_weights
   #####################
+  
+  if(Ignorable){n_hidden_layers_r = 0L; h_r=0L}
 
   # (family, link) = (Gaussian, identity), (Multinomial, mlogit), (Poisson, log)
 

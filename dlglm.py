@@ -278,10 +278,14 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
 
   # formulation of NN_xm in mixed data type scenario
   NNs_xm = {}   # include Xo, R (nonignorable), Z, and Yo
+  
+  ## DEFAULT including Y
   if Ignorable: p2 = p+dim_z+1
   else: p2 = 2*p+dim_z+1
-  # if Ignorable: p2 = p+dim_z+C
-  # else: p2 = 2*p+dim_z+C
+  
+  ## TESTING excluding Y
+  # if Ignorable: p2 = p+dim_z
+  # else: p2 = 2*p+dim_z
   
   init0 = "orthogonal"   # can change this to "normal", or "uniform" user-defined later
   if miss_x:
@@ -293,12 +297,6 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
       NNs_xm['cat']=[]
       where_ids_cat = np.where(ids_cat)
       for ii in range(0, p_cat):
-        # Cs and NNs_xm['cat'] are lists with elements pertaining to each categorical variable
-        # print(ii)
-        # print(where_ids_cat[0][ii])
-        # print(X[:,where_ids_cat[0][ii]])
-        # print(len(np.unique(X[~np.isnan(X[:,where_ids_cat[0][ii]]),where_ids_cat[0][ii]])))
-        # Cs.append( len(np.unique(X[~np.isnan(X[:,where_ids_cat[0][ii]]),where_ids_cat[0][ii]])) )
         NNs_xm['cat'].append( network_maker(act_fun, n_hidden_layers, p2, h1, int(Cs[ii]), True, False, init0).cuda() )
   
   # if miss_y: NN_ym = network_maker(act_fun, n_hidden_layers, p+2, h1, n_params_ym, True, False).cuda()
@@ -310,7 +308,6 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
   # else: p3 = 2*p+2*C
   if miss_y: NN_ym = network_maker(act_fun, n_hidden_layers_y, p3, h1, n_params_ym, True, False, init0).cuda()  # need to fix
   else: NN_ym = None
-  # NN_y = network_maker(act_fun, 0, p, h2, n_params_y, False, False).cuda()
   # NN_y = network_maker(act_fun, n_hidden_layers_y, p, h2, n_params_y, True, False).cuda()      # need bias term for nonlinear NN_y!!
   NN_y = network_maker(act_fun, n_hidden_layers_y, p, h2, n_params_y, True, False, init0).cuda()      # need bias term for nonlinear NN_y!!
   # NN_y = network_maker(act_fun, n_hidden_layers_y, p, h2, n_params_y, False, False).cuda()       # no intercept
@@ -458,35 +455,46 @@ def dlglm(X,Rx,Y,Ry, covars_r_x, covars_r_y, norm_means_x, norm_sds_x, norm_mean
     
     ## NN_xm ## q(xm|xo,r)    (if missing in x detected)
     if miss_x:
-      # out_NN_xm = NN_xm(torch.cat([iota_x,mask_x],1))
-      # # bs x p -- > sample niw times
-      # qxmgivenxor = td.Normal(loc=out_NN_xm[..., :p],scale=torch.nn.Softplus()(out_NN_xm[..., p:(2*p)])+0.001)    ### condition contribution of this term in the ELBO by miss_x
-      # params_xm = {'mean':out_NN_xm[..., :p], 'scale':torch.nn.Softplus()(out_NN_xm[..., p:(2*p)])+0.001}
-      # if draw_miss: xm = qxmgivenxor.rsample([niw]); xm_flat = xm.reshape([niw*batch_size,p])
       
       # initialize lists for categorical variables
       outs_NN_xm = {}; outs_NN_xm['cat'] = []; qxmgivenxors = {}; qxmgivenxors['cat'] = []
       params_xm = {}; params_xm['cat'] = []
     
       if exists_types[0]:
+        ## DEFAULT
         if Ignorable:   outs_NN_xm['real'] = NNs_xm['real'](torch.cat([tiled_iota_x,zgivenx,tiled_iota_y],1))
         else:  outs_NN_xm['real'] = NNs_xm['real'](torch.cat([tiled_iota_x,tiled_mask_x,zgivenx,tiled_iota_y],1))
+        ## TESTING
+        # if Ignorable:   outs_NN_xm['real'] = NNs_xm['real'](torch.cat([tiled_iota_x,zgivenx],1))
+        # else:  outs_NN_xm['real'] = NNs_xm['real'](torch.cat([tiled_iota_x,tiled_mask_x,zgivenx],1))
         qxmgivenxors['real'] = td.Normal(loc=outs_NN_xm['real'][..., :p_real],scale=torch.nn.Softplus()(outs_NN_xm['real'][..., p_real:(2*p_real)])+0.001)
         params_xm['real'] = {'mean': torch.mean(outs_NN_xm['real'][..., :p_real].reshape([niw,batch_size,p_real]),0).detach().cpu().data.numpy(),'scale': torch.mean(torch.nn.Softplus()(outs_NN_xm['real'][..., p_real:(2*p_real)]).reshape([niw,batch_size,p_real]),0).detach().cpu().data.numpy()+0.001}
       if exists_types[1]:
+        ## DEFAULT
         if Ignorable:  outs_NN_xm['count'] = NNs_xm['count'](torch.cat([tiled_iota_x,zgivenx,tiled_iota_y],1))
         else:  outs_NN_xm['count'] = NNs_xm['count'](torch.cat([tiled_iota_x,tiled_mask_x,zgivenx,tiled_iota_y],1))
+        ## TESTING
+        # if Ignorable:  outs_NN_xm['count'] = NNs_xm['count'](torch.cat([tiled_iota_x,zgivenx],1))
+        # else:  outs_NN_xm['count'] = NNs_xm['count'](torch.cat([tiled_iota_x,tiled_mask_x,zgivenx],1))
         qxmgivenxors['count'] = td.Normal(loc=outs_NN_xm['count'][..., :p_count],scale=torch.nn.Softplus()(outs_NN_xm['count'][..., p_count:(2*p_count)])+0.001)   # log transformed count data
         params_xm['count'] = {'mean': torch.mean(outs_NN_xm['count'][..., :p_count].reshape([niw,batch_size,p_real]),0).detach().cpu().data.numpy(),'scale': torch.mean(torch.nn.Softplus()(outs_NN_xm['count'][..., p_count:(2*p_count)]).reshape([niw,batch_size,p_real]),0).detach().cpu().data.numpy()+0.001}
       if exists_types[2]:
+        ## DEFAULT
         if Ignorable:   outs_NN_xm['pos'] = NNs_xm['pos'](torch.cat([tiled_iota_x,zgivenx,tiled_iota_y],1))
         else:  outs_NN_xm['pos'] = NNs_xm['pos'](torch.cat([tiled_iota_x,tiled_mask_x,zgivenx,tiled_iota_y],1))
+        ## TESTING
+        # if Ignorable:   outs_NN_xm['pos'] = NNs_xm['pos'](torch.cat([tiled_iota_x,zgivenx,tiled_iota_y],1))
+        # else:  outs_NN_xm['pos'] = NNs_xm['pos'](torch.cat([tiled_iota_x,tiled_mask_x,zgivenx,tiled_iota_y],1))
         qxmgivenxors['pos'] = td.LogNormal(loc=outs_NN_xm['pos'][..., :p_pos],scale=torch.nn.Softplus()(outs_NN_xm['pos'][..., p_pos:(2*p_pos)])+0.001)   # log transformed count data
         params_xm['pos'] = {'mean': torch.mean(outs_NN_xm['pos'][..., :p_pos].reshape([niw,batch_size,p_real]),0).detach().cpu().data.numpy(),'scale': torch.mean(torch.nn.Softplus()(outs_NN_xm['pos'][..., p_pos:(2*p_pos)]).reshape([niw,batch_size,p_real]),0).detach().cpu().data.numpy()+0.001}
       if exists_types[3]:
         for ii in range(0,p_cat):
+          ## DEFAULT
           if Ignorable:  outs_NN_xm['cat'].append( torch.clamp( torch.nn.Softmax(dim=1)( NNs_xm['cat'][ii](torch.cat([tiled_iota_x,zgivenx,tiled_iota_y],1)) ), min=0.0001, max=0.9999))
           else:  outs_NN_xm['cat'].append( torch.clamp( torch.nn.Softmax(dim=1)( NNs_xm['cat'][ii](torch.cat([tiled_iota_x,tiled_mask_x,zgivenx,tiled_iota_y],1)) ), min=0.0001, max=0.9999))
+          ## TESTING
+          # if Ignorable:  outs_NN_xm['cat'].append( torch.clamp( torch.nn.Softmax(dim=1)( NNs_xm['cat'][ii](torch.cat([tiled_iota_x,zgivenx],1)) ), min=0.0001, max=0.9999))
+          # else:  outs_NN_xm['cat'].append( torch.clamp( torch.nn.Softmax(dim=1)( NNs_xm['cat'][ii](torch.cat([tiled_iota_x,tiled_mask_x,zgivenx],1)) ), min=0.0001, max=0.9999))
           
           qxmgivenxors['cat'].append( td.RelaxedOneHotCategorical(temperature=temp, probs = outs_NN_xm['cat'][ii]) )
           params_xm['cat'].append(torch.mean(outs_NN_xm['cat'][ii].reshape([niw,batch_size,-1]),0).detach().cpu().data.numpy())

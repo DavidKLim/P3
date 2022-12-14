@@ -3,7 +3,7 @@ inv_logit = function(x){
 }
 
 # N=100000; P=2; pi=0.5
-# packages: MASS, qrnn
+# packages: MASS, qrnn, import all of mlbench
 simulateData = function(dataset = "SIM", N, D, P, data_types_x, family, seed, NL_x, NL_y,
                         beta=0.25, C=NULL, Cy=1){
   # if params are specified, then simulate from distributions
@@ -13,6 +13,7 @@ simulateData = function(dataset = "SIM", N, D, P, data_types_x, family, seed, NL
   # mu=0; sd=1; beta=5
   library(qrnn)  # for softplus/sigmoid/elu function
   library(xlsx)
+  library(mlbench)
   logsumexp <- function (x) {
     y = max(x)
     y + log(sum(exp(x - y)))
@@ -123,20 +124,27 @@ simulateData = function(dataset = "SIM", N, D, P, data_types_x, family, seed, NL
     data=data[,-ncol(data)] # take out class (2)
     params=NULL
     X=data; Y=classes
-  } else if(dataset=="SHUTTLE"){
-    data <- read.table(url("https://archive.ics.uci.edu/ml/machine-learning-databases/statlog/shuttle/shuttle.tst"),header=FALSE, sep=" ")
+  } else if(dataset=="SHUTTLE"){   # 14500 x 9
+    # data1 <- read.table(url("https://archive.ics.uci.edu/ml/machine-learning-databases/statlog/shuttle/shuttle.trn.Z"),header=FALSE, sep=" ")
+    # data2 <- read.table(url("https://archive.ics.uci.edu/ml/machine-learning-databases/statlog/shuttle/shuttle.tst"),header=FALSE, sep=" ")
+    data(Shuttle)
+    data = Shuttle
+    data$Class = as.numeric(as.factor(data$Class))
     classes=data[,ncol(data)]
     data=data[,-ncol(data)]
     params=NULL
-    X=data; Y=classes
-  } else if(dataset=="SHUTTLE2"){
-    data <- read.table(url("https://archive.ics.uci.edu/ml/machine-learning-databases/statlog/shuttle/shuttle.tst"),header=FALSE, sep=" ")
-    data = data[data$V10 %in%c(1,4,5),]  # remove classes 2, 3, 6, 7: with 13, 39, 4, and 2 observations only
+    X=data; Y=classes  # 7 classes
+  } else if(dataset=="SHUTTLE2"){   # 14442 x 9
+    # data <- read.table(url("https://archive.ics.uci.edu/ml/machine-learning-databases/statlog/shuttle/shuttle.tst"),header=FALSE, sep=" ")
+    data(Shuttle)
+    data = Shuttle
+    data = data[data$Class %in% c("Rad.Flow","High","Bypass"),]  # remove classes 2, 3, 6, 7: with 50, 171, 10 ,13 observations only
+    data$Class = as.numeric(as.factor(data$Class))
     classes=data[,ncol(data)]
     data=data[,-ncol(data)]
     params=NULL
-    X=data; Y=classes
-  } else if(dataset=="LETTER"){
+    X=data; Y=classes   # 3 classes
+  } else if(dataset=="LETTER"){   # 20000 x 16
     data <- read.table(url("https://archive.ics.uci.edu/ml/machine-learning-databases/letter-recognition/letter-recognition.data"),header=FALSE, sep=",")
     colnames(data) = c("lettr","x-box","y-box","width","high",
                        "onpix","x-bar","y-bar","x2bar","y2bar",
@@ -145,14 +153,14 @@ simulateData = function(dataset = "SIM", N, D, P, data_types_x, family, seed, NL
     classes=data[,1]
     data = data[,-1]
     params=NULL
-    X=data; Y=classes
-  } else if(dataset=="DRYBEAN"){
+    X=data; Y=classes   # 26 classes (letters)
+  } else if(dataset=="DRYBEAN"){   # 13611 x 16
     data = read.csv("./data/DryBeanDataset/Dry_Bean_Dataset.csv")
     classes=data[,ncol(data)]
     data=data[,-ncol(data)]
     params=NULL
-    X=data; Y=classes   # categorical
-  } else if(dataset=="CAREVALUATION"){
+    X=data; Y=classes   # 7 classes
+  } else if(dataset=="CAREVALUATION"){  # 1728 x 6
     data <- read.table(url("https://archive.ics.uci.edu/ml/machine-learning-databases/car/car.data"),header=FALSE, sep=",")
     for(c in 1:ncol(data)){
       data[,c] = as.numeric(as.factor(data[,c]))
@@ -161,14 +169,14 @@ simulateData = function(dataset = "SIM", N, D, P, data_types_x, family, seed, NL
     classes=data[,ncol(data)]
     data=data[,-ncol(data)]
     params=NULL
-    X=data; Y=classes   # categorical
-  } else if(dataset=="RAISIN"){
+    X=data; Y=classes   # categorical 4 classes
+  } else if(dataset=="RAISIN"){   # 900 x 7
     data = xlsx::read.xlsx("./data/Raisin_Dataset/Raisin_Dataset.xlsx",sheetIndex = 1)
     classes=data[,ncol(data)]
     data=data[,-ncol(data)]
     params=NULL
-    X=data; Y=classes   # categorical
-  } else if(dataset=="ABALONE"){
+    X=data; Y=classes   # categorical 2 classes
+  } else if(dataset=="ABALONE"){   # 4177 x 8
     data <- read.table(url("https://archive.ics.uci.edu/ml/machine-learning-databases/abalone/abalone.data"),header=FALSE, sep=",")
     colnames(data)=c("sex","length","diameter","height","wholeweight","shuckedweight","visceraweight","shellweight","rings")
     data[,1] = as.numeric(as.factor(data[,1]))  # gender: female, male, or infant

@@ -70,7 +70,7 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
   }
   
   N=nrow(X); P=ncol(X)
-  if(!grepl("SIM",dataset) & family=="Multinomial"){ Y = as.numeric(as.factor(Y)) }  # sometimes the cat vars are nonnumeric for UCI
+  if(!grepl("SIM",dataset) & family=="Multinomial"){ levels_Y = levels(factor(Y)); Y = as.numeric(as.factor(Y)) }  # sometimes the cat vars are nonnumeric for UCI
   
   data_types_x_0 = data_types_x
   # mask_x = (res$mask_x)^2; mask_y = (res$mask_y)^2
@@ -140,7 +140,7 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
   yhats2 = matrix(ncol=0,nrow=nrow(Ys$test))
   prhats = list()
   prhats2 = list()    # with missingness in test set (preimpute separately for mean/zero/mice, dlglm can take it in and sample from posterior)
-  
+  prhats_train = list()
   
   if(family=="Multinomial"){ link = "mlogit"
   } else if(family=="Gaussian"){ link = "identity"
@@ -186,6 +186,7 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
       # }
       prhats$"zero" = prhat_zero_pred
       prhats2$"zero" = prhat_zero_pred2
+      prhats_train$"zero" = predict(fit_zero, newdata=cbind(Xs_zero$train,Ys$train,row.names = NULL), type="probs")
     }
     xhats$"zero" = xhat_zero
     
@@ -229,6 +230,8 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
       # }
       prhats$"mean" = prhat_mean_pred
       prhats2$"mean" = prhat_mean_pred2
+      prhats_train$"mean" = predict(fit_mean, newdata=cbind(Xs_mean$train,Ys$train,row.names = NULL), type="probs")
+      
     }
     xhats$"mean" = xhat_mean
     
@@ -286,17 +289,22 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
     }
     yhats = cbind(yhats,mu_y); colnames(yhats)[ncol(yhats)] = "dlglm"
     yhats2 = cbind(yhats2,mu_y2); colnames(yhats2)[ncol(yhats2)] = "dlglm"
+    load(sprintf("%s/%s_%d_%d/%sopt_train.out", dir_name, mechanism, miss.params$miss_pct_features, pi*100, inorm))
     
     if(family=="Multinomial"){
       if(Cy==2){
         prhats$"dlglm" = probs_y[,-1]
         prhats2$"dlglm" = res$all_params$y$probs[,-1]   ## if only 2 classes, yield just one prob (pr(y=1))
+        prhats_train$"dlglm" = res_train$all_params$y$probs[,-1]
       }else if(Cy>2){
         prhats$"dlglm" = probs_y
         prhats2$"dlglm" = res$all_params$y$probs   # if C classes, yield one prob per class
+        prhats_train$"dlglm" = res_train$all_params$y$probs
       }
       # prhats$"dlglm_mode" = res$all_params$y$probs[,-1]
-      
+      if(Cy==2){
+      }else if(Cy>2){
+      }
     }
     
     if(res$train_params$n_hidden_layers_y == 0){
@@ -352,14 +360,17 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
     }
     yhats = cbind(yhats,imu_y); colnames(yhats)[ncol(yhats)] = "idlglm"
     yhats2 = cbind(yhats2,imu_y2); colnames(yhats2)[ncol(yhats2)] = "idlglm"
+    load(sprintf("%s/Ignorable/%s_%d_%d/%sopt_train.out", dir_name, mechanism, miss.params$miss_pct_features, pi*100, inorm))
     
     if(family=="Multinomial"){
       if(Cy==2){
         prhats$"idlglm" = iprobs_y[,-1]
         prhats2$"idlglm" = ires$all_params$y$probs[,-1]
+        prhats_train$"idlglm" = res_train$all_params$y$probs[,-1]  # res_train will be idlglm now
       }else if(Cy>2){
         prhats$"idlglm" = iprobs_y
         prhats2$"idlglm" = ires$all_params$y$probs
+        prhats_train$"idlglm" = res_train$all_params$y$probs
       }
       # prhats$"idlglm_mode" = ires$all_params$y$probs[,-1]
     }
@@ -387,22 +398,30 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
     xhat_mice = res_mice$xhat_mice; xyhat_mice = res_mice$xyhat_mice  # training x/yhats
     res_MICE = res_mice$res_MICE; res_MICE_test=res_mice$res_MICE_test
     rm(res_mice)
-    
     if(family=="Gaussian"){
       fits_MICE = list()
       for(i in 1:res_MICE$m){
+        if(i==1){
+          xhat_mice_train = mice::complete(res_MICE,i)
+        }else{ xhat_mice_train = xhat_mice_train + mice::complete(res_MICE,i) }
         fits_MICE[[i]] = glm(y ~ 0+., data=mice::complete(res_MICE,i))
         fits_MICE[[i]]$data = NULL; fits_MICE[[i]]$model=NULL
       }
+      xhat_mice_train = xhat_mice_train/res_MICE$m
       fit_MICE = pool(fits_MICE)
     }else if(family=="Multinomial"){
       fits_MICE = list()
       for(i in 1:res_MICE$m){
+        if(i==1){
+          xhat_mice_train = mice::complete(res_MICE,i)
+        }else{ xhat_mice_train = xhat_mice_train + mice::complete(res_MICE,i) }
         fits_MICE[[i]] = nnet::multinom(y ~ 0+., data=mice::complete(res_MICE,i))
         fits_MICE[[i]]$data = NULL; fits_MICE[[i]]$model=NULL
       }
+      xhat_mice_train = xhat_mice_train/res_MICE$m
       fit_MICE = pool(fits_MICE)
     }
+    xhat_mice_train = xhat_mice_train[,-ncol(xhat_mice_train)]
     
     dummy_fit_MICE = fits_MICE[[1]]; rm(fits_MICE)
     dummy_fit_MICE$coefficients = fit_MICE$pooled$estimate
@@ -420,8 +439,8 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
     
     w_mice = c(fit_MICE$pooled$estimate)
     
-    yhats = cbind(yhats,yhat_mice_pred); colnames(yhats)[ncol(yhats)] = "mice"
-    yhats2 = cbind(yhats2,yhat_mice_pred2); colnames(yhats2)[ncol(yhats2)] = "mice"
+    yhats = cbind(yhats,as.numeric(yhat_mice_pred)); colnames(yhats)[ncol(yhats)] = "mice"
+    yhats2 = cbind(yhats2,as.numeric(yhat_mice_pred2)); colnames(yhats2)[ncol(yhats2)] = "mice"
     
     if(family=="Multinomial"){
       prhat_mice_pred = predict(dummy_fit_MICE, newdata=Xs$test, type="probs")
@@ -433,8 +452,11 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
       #   prhats$"mice" = prhat_mice_pred
       #   prhats2$"mice" = prhat_mice_pred2
       # }
+      colnames(prhat_mice_pred) = NULL;      colnames(prhat_mice_pred2) = NULL
       prhats$"mice" = prhat_mice_pred
       prhats2$"mice" = prhat_mice_pred2
+      prhats_train$"mice" = predict(dummy_fit_MICE, newdata=xhat_mice_train, type="probs")
+      
     }
     tab = cbind(tab,w_mice); colnames(tab)[ncol(tab)] = "mice"
     
@@ -752,14 +774,14 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
   
   # compare both imputation results
   if(grepl("x",case)){
-    for(c in miss_cols){
-      ids = Rxs$test[,c]==0
-      diffs_df = lapply(diffs,function(x) x[ids,c])
-      png(filename=sprintf("%s/%s_%d_%d/%simputedX_col%d.png",dir_name, mechanism, miss.params$miss_pct_features, pi*100, inorm,c),res = 300,width = 10, height = 10, units = 'in')
-      boxplot(diffs_df, names=names(diffs_df),
-              outline=F, main=sprintf("Abs dev between true and imputed X in col%d",c))
-      dev.off()
-    }
+    # for(c in miss_cols){
+    #   ids = Rxs$test[,c]==0
+    #   diffs_df = lapply(diffs,function(x) x[ids,c])
+    #   png(filename=sprintf("%s/%s_%d_%d/%simputedX_col%d.png",dir_name, mechanism, miss.params$miss_pct_features, pi*100, inorm,c),res = 300,width = 10, height = 10, units = 'in')
+    #   boxplot(diffs_df, names=names(diffs_df),
+    #           outline=F, main=sprintf("Abs dev between true and imputed X in col%d",c))
+    #   dev.off()
+    # }
     png(filename=sprintf("%s/%s_%d_%d/%simputedX.png",dir_name, mechanism, miss.params$miss_pct_features, pi*100, inorm),res = 300,width = 10, height = 10, units = 'in')
     boxplot(L1s, names=names(L1s),
             outline=F, main="Absolute deviation between true and imputed X")
@@ -861,29 +883,97 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
   print("Prediction")
   yhats = asplit(yhats,2)
   yhats2 = asplit(yhats2,2)
+  
+  cutoffs = seq(0.01,1,0.01)
+  
+  ### use prhats_train list to tune cutoff: mice, mean, dlglm, idlglm. probs of training set.
+  ### NEED TO TUNE CUTOFFS FOR: PPV, TPR, FPR, F1, kappa, and mcc
+  ## measures::PPV(truth, response, positive, probabilities = NULL)
+  library(yardstick)
+  
   if(family=="Multinomial"){
     all_classes = unique(Ys$test$Y)
     if(Cy==2){
+      yhats_cut = list(); yhats_cut2 = list()
+      # for(i in 1:length(prhats)){
+      for(m in 1:length(methods)){
+        cut_metrics = matrix(nrow=length(cutoffs),ncol=6)
+        colnames(cut_metrics) = c("PPV","TPR","FPR","F1","kappa","MCC"); rownames(cut_metrics) = cutoffs
+        for(c in 1:length(cutoffs)){
+          yhat = (prhats_train[which(names(prhats_train)==methods[m])][[1]]>=cutoffs[c])^2*max(Ys$train$Y) + (prhats_train[which(names(prhats_train)==methods[m])][[1]]<cutoffs[c])^2*min(Ys$train$Y)
+          #### use kappa as main metric
+          ppv=measures::PPV(Ys$train$Y, yhat, max(Ys$train$Y))
+          tpr=measures::TPR(Ys$train$Y, yhat, max(Ys$train$Y))
+          fpr=measures::FPR(Ys$train$Y, yhat, min(Ys$train$Y), max(Ys$train$Y))
+          f1=measures::F1(Ys$train$Y, yhat, max(Ys$train$Y))
+          kap=measures::KAPPA(Ys$train$Y, yhat)
+          mcc=yardstick::mcc_vec(truth=factor(c(Ys$train$Y),levels=levels(factor(Ys$train$Y))), estimate=factor(yhat,levels=levels(factor(Ys$train$Y))))
+          cut_metrics[c,] = c(ppv,tpr,fpr,f1,kap,mcc)
+        }
+        opt_cutoff = as.numeric(names(which.max(cut_metrics[,"kappa"])))
+        yhats_cut[[m]] = (prhats[which(names(prhats)==methods[m])][[1]]>opt_cutoff)^2*max(Ys$train$Y) + (prhats[which(names(prhats)==methods[m])][[1]]<=opt_cutoff)^2*min(Ys$train$Y)    # apply(prhats,1, function(x){(x[2]>opt_cutoff)^2})
+        yhats_cut2[[m]] = (prhats2[which(names(prhats2)==methods[m])][[1]]>opt_cutoff)^2*max(Ys$train$Y) + (prhats2[which(names(prhats2)==methods[m])][[1]]<=opt_cutoff)^2*min(Ys$train$Y)    # apply(prhats,1, function(x){(x[2]>opt_cutoff)^2})
+        names(yhats_cut)[m] = methods[m]; names(yhats_cut2)[m] = methods[m]
+      }
       AUC = lapply(prhats,function(x){as.numeric(pROC::auc(c(Ys$test$Y), x))})
       AUC2 = lapply(prhats2,function(x){as.numeric(pROC::auc(c(Ys$test$Y), x))})   ### CAT ONLY
       
       br1 = lapply(prhats, function(x){measures::Brier(x,c(Ys$test$Y), min(Ys$test$Y), max(Ys$test$Y))})
       br2 = lapply(prhats2, function(x){measures::Brier(x,c(Ys$test$Y), min(Ys$test$Y), max(Ys$test$Y))})  ### BINARY ONLY
       
-      TPR1 = lapply(yhats, function(x){if(all(Ys$test$Y != x)){0} else{measures::TPR(c(Ys$test$Y), x, max(Ys$test$Y))}})
-      TPR2 = lapply(yhats2, function(x){if(all(Ys$test$Y != x)){0} else{measures::TPR(c(Ys$test$Y), x, max(Ys$test$Y))}})
+      # TPR1 = lapply(yhats, function(x){if(all(Ys$test$Y != x)){0} else{measures::TPR(c(Ys$test$Y), x, max(Ys$test$Y))}})
+      # TPR2 = lapply(yhats2, function(x){if(all(Ys$test$Y != x)){0} else{measures::TPR(c(Ys$test$Y), x, max(Ys$test$Y))}})
+      # FPR1 = lapply(yhats, function(x){measures::FPR(c(Ys$test$Y), x, min(Ys$test$Y), max(Ys$test$Y))})
+      # FPR2 = lapply(yhats2, function(x){measures::FPR(c(Ys$test$Y), x, min(Ys$test$Y), max(Ys$test$Y))})
+      # F11 = lapply(yhats, function(x){measures::F1(c(Ys$test$Y), x, max(Ys$test$Y))})
+      # F12 = lapply(yhats2, function(x){measures::F1(c(Ys$test$Y), x, max(Ys$test$Y))})
+      # PPV1 = lapply(yhats, function(x){measures::PPV(c(Ys$test$Y), x, max(Ys$test$Y))})
+      # PPV2 = lapply(yhats2, function(x){measures::PPV(c(Ys$test$Y), x, max(Ys$test$Y))})
       
-      FPR1 = lapply(yhats, function(x){measures::FPR(c(Ys$test$Y), x, min(Ys$test$Y), max(Ys$test$Y))})
-      FPR2 = lapply(yhats2, function(x){measures::FPR(c(Ys$test$Y), x, min(Ys$test$Y), max(Ys$test$Y))})
-      
-      F11 = lapply(yhats, function(x){measures::F1(c(Ys$test$Y), x, max(Ys$test$Y))})
-      F12 = lapply(yhats2, function(x){measures::F1(c(Ys$test$Y), x, max(Ys$test$Y))})
+      TPR1 = lapply(yhats_cut, function(x){if(all(Ys$test$Y != x)){0} else{measures::TPR(c(Ys$test$Y), x, max(Ys$test$Y))}})
+      TPR2 = lapply(yhats_cut2, function(x){if(all(Ys$test$Y != x)){0} else{measures::TPR(c(Ys$test$Y), x, max(Ys$test$Y))}})
+      FPR1 = lapply(yhats_cut, function(x){measures::FPR(c(Ys$test$Y), x, min(Ys$test$Y), max(Ys$test$Y))})
+      FPR2 = lapply(yhats_cut2, function(x){measures::FPR(c(Ys$test$Y), x, min(Ys$test$Y), max(Ys$test$Y))})
+      F11 = lapply(yhats_cut, function(x){measures::F1(c(Ys$test$Y), x, max(Ys$test$Y))})
+      F12 = lapply(yhats_cut2, function(x){measures::F1(c(Ys$test$Y), x, max(Ys$test$Y))})
+      PPV1 = lapply(yhats_cut, function(x){measures::PPV(c(Ys$test$Y), x, max(Ys$test$Y))})
+      PPV2 = lapply(yhats_cut2, function(x){measures::PPV(c(Ys$test$Y), x, max(Ys$test$Y))})
       all_AUC = AUC; all_AUC2 = AUC2; all_br1 = br1; all_br2 = br2; all_TPR1=TPR1; all_TPR2=TPR2
-      all_FPR1=FPR1; all_FPR2=FPR2; all_F11=F11; all_F12=F12
+      all_FPR1=FPR1; all_FPR2=FPR2; all_F11=F11; all_F12=F12; all_PPV1 = PPV1; all_PPV2 = PPV2
     } else{
       #### if more than one class, compute AUC and Brier scores on class 1 vs rest, then class 2 vs rest, ... . Then average?
       all_AUC = list(); all_AUC2 = list(); all_br1=list(); all_br2=list(); all_TPR1=list(); all_TPR2=list()
-      all_FPR1=list(); all_FPR2=list(); all_F11=list(); all_F12=list()
+      all_FPR1=list(); all_FPR2=list(); all_F11=list(); all_F12=list(); all_PPV1=list(); all_PPV2=list()
+      
+      # for(i in 1:length(prhats)){
+      #   for(c in 1:length(cutoffs)){
+      #     yhat = apply(prhats_train[[i]],1, function(x){(x[2]>cutoffs[c])^2})
+      #   }
+      #   yhats_cut[[i]] = apply(prhats,1, function(x){(x[2]>opt_cutoff)^2})
+      #   names(yhats_cut)[i] = names(prhats)[i]
+      # }
+      
+      yhats_cut = list(); yhats_cut2 = list()
+      # for(i in 1:length(prhats)){
+      # for(m in 1:length(methods)){
+      #   cut_metrics = matrix(nrow=length(cutoffs),ncol=6)
+      #   colnames(cut_metrics) = c("PPV","TPR","FPR","F1","kappa","MCC"); rownames(cut_metrics) = cutoffs
+      #   for(c in 1:length(cutoffs)){
+      #     yhat = (prhats_train[which(names(prhats_train)==methods[m])][[1]]>=cutoffs[c])^2*max(Ys$train$Y) + (prhats_train[which(names(prhats_train)==methods[m])][[1]]<cutoffs[c])^2*min(Ys$train$Y)
+      #     #### use kappa as main metric
+      #     ppv=measures::PPV(Ys$train$Y, yhat, max(Ys$train$Y))
+      #     tpr=measures::TPR(Ys$train$Y, yhat, max(Ys$train$Y))
+      #     fpr=measures::FPR(Ys$train$Y, yhat, min(Ys$train$Y), max(Ys$train$Y))
+      #     f1=measures::F1(Ys$train$Y, yhat, max(Ys$train$Y))
+      #     kap=measures::KAPPA(Ys$train$Y, yhat)
+      #     mcc=yardstick::mcc_vec(truth=factor(c(Ys$train$Y),levels=levels(factor(Ys$train$Y))), estimate=factor(yhat,levels=levels(factor(Ys$train$Y))))
+      #     cut_metrics[c,] = c(ppv,tpr,fpr,f1,kap,mcc)
+      #   }
+      #   opt_cutoff = as.numeric(names(which.max(cut_metrics[,"kappa"])))
+      #   yhats_cut[[m]] = (prhats[which(names(prhats)==methods[m])][[1]]>opt_cutoff)^2*max(Ys$train$Y) + (prhats[which(names(prhats)==methods[m])][[1]]<=opt_cutoff)^2*min(Ys$train$Y)    # apply(prhats,1, function(x){(x[2]>opt_cutoff)^2})
+      #   yhats_cut2[[m]] = (prhats2[which(names(prhats2)==methods[m])][[1]]>opt_cutoff)^2*max(Ys$train$Y) + (prhats2[which(names(prhats2)==methods[m])][[1]]<=opt_cutoff)^2*min(Ys$train$Y)    # apply(prhats,1, function(x){(x[2]>opt_cutoff)^2})
+      #   names(yhats_cut)[m] = methods[m]; names(yhats_cut2)[m] = methods[m]
+      # }
       
       for(m in 1:length(methods)){
         all_AUC[[m]] = rep(NA, Cy); names(all_AUC)[m]=methods[m]; names(all_AUC[[m]]) = all_classes
@@ -896,37 +986,93 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
         all_FPR2[[m]] = rep(NA, Cy); names(all_FPR2)[m]=methods[m]; names(all_FPR2[[m]]) = all_classes
         all_F11[[m]] = rep(NA, Cy); names(all_F11)[m]=methods[m]; names(all_F11[[m]]) = all_classes
         all_F12[[m]] = rep(NA, Cy); names(all_F12)[m]=methods[m]; names(all_F12[[m]]) = all_classes
+        all_PPV1[[m]] = rep(NA, Cy); names(all_PPV1)[m]=methods[m]; names(all_PPV1[[m]]) = all_classes
+        all_PPV2[[m]] = rep(NA, Cy); names(all_PPV2)[m]=methods[m]; names(all_PPV2[[m]]) = all_classes
         
         for(c in 1:Cy){
+          print(c)
           Yc = c(Ys$test$Y); Yc[Yc!=all_classes[c]] = -999   # negative class dummy set as -999
+
+          ###################################################
+          Yc_train = c(Ys$train$Y); Yc_train[Yc_train!=all_classes[c]] = -999
+          cut_metrics = matrix(nrow=length(cutoffs),ncol=6)
+          colnames(cut_metrics) = c("PPV","TPR","FPR","F1","kappa","MCC"); rownames(cut_metrics) = cutoffs
+          prhats_train_cut = prhats_train[which(names(prhats_train)==methods[m])][[1]][,all_classes[c]]
+          prhats_cut = prhats[which(names(prhats)==methods[m])][[1]][,all_classes[c]]
+          prhats_cut2 = prhats2[which(names(prhats2)==methods[m])][[1]][,all_classes[c]]
+          
+          # prhats_train_cut = prhats_train[which(names(prhats_train)==methods[m])][[1]][,c]
+          # prhats_cut = prhats[which(names(prhats)==methods[m])][[1]][,c]
+          # prhats_cut2 = prhats2[which(names(prhats2)==methods[m])][[1]][,c]
+
+          for(co in 1:length(cutoffs)){
+            yhat = all_classes[c]*(prhats_train_cut>=cutoffs[co])^2 +
+              (-999)*(prhats_train_cut<cutoffs[co])^2
+            #### use kappa as main metric
+            ppv=measures::PPV(Yc_train, yhat, all_classes[c])
+            tpr=measures::TPR(Yc_train, yhat, all_classes[c])
+            fpr=measures::FPR(Yc_train, yhat, -999, all_classes[c])
+            f1=measures::F1(Yc_train, yhat, all_classes[c])
+            kap=measures::KAPPA(Yc_train, yhat)
+            mcc=yardstick::mcc_vec(truth=factor(c(Yc_train),levels=levels(factor(Yc_train))), estimate=factor(yhat,levels=levels(factor(Yc_train))))
+            cut_metrics[co,] = c(ppv,tpr,fpr,f1,kap,mcc)
+          }
+
+          opt_cutoff = as.numeric(names(which.max(cut_metrics[,"kappa"])))
+          yhats_cut[[m]] = all_classes[c]*(prhats_cut>=opt_cutoff)^2 + (-999)*(prhats_cut<opt_cutoff)^2    # apply(prhats,1, function(x){(x[2]>opt_cutoff)^2})
+          yhats_cut2[[m]] = all_classes[c]*(prhats_cut2>=opt_cutoff)^2 + (-999)*(prhats_cut2<opt_cutoff)^2    # apply(prhats,1, function(x){(x[2]>opt_cutoff)^2})
+          names(yhats_cut)[m] = methods[m]; names(yhats_cut2)[m] = methods[m]
+
+          ########################################
+          
           all_AUC[[m]][c] = as.numeric(pROC::auc(Yc, prhats[names(prhats)==methods[m]][[1]][,c], levels=c(-999, all_classes[c]) ))
           all_AUC2[[m]][c] = as.numeric(pROC::auc(Yc, prhats2[names(prhats2)==methods[m]][[1]][,c], levels=c(-999, all_classes[c]) ))
-          
           all_br1[[m]][c] = measures::Brier(prhats[names(prhats)==methods[m]][[1]][,c], Yc, -999, all_classes[c])
           all_br2[[m]][c] = measures::Brier(prhats2[names(prhats2)==methods[m]][[1]][,c], Yc, -999, all_classes[c])
+          # if(all(yhats[names(yhats)==methods[m]][[1]] != Yc)){  # no true positives
+          #   all_TPR1[[m]][c] = 0
+          # }else{
+          #   all_TPR1[[m]][c] = measures::TPR(yhats[names(yhats)==methods[m]][[1]], Yc, all_classes[c])
+          # }
+          # if(all(yhats2[names(yhats2)==methods[m]][[1]] != Yc)){
+          #   all_TPR2[[m]][c] = 0
+          # }else{
+          #   all_TPR2[[m]][c] = measures::TPR(yhats2[names(yhats2)==methods[m]][[1]], Yc, all_classes[c])
+          # }
+          # yhats0 = yhats[names(yhats)==methods[m]][[1]]; yhats0[yhats0!=all_classes[c]]=-999
+          # yhats20 = yhats2[names(yhats2)==methods[m]][[1]]; yhats20[yhats20!=all_classes[c]]=-999
+          # all_FPR1[[m]][c] = measures::FPR(yhats0, Yc, -999, all_classes[c])
+          # all_FPR2[[m]][c] = measures::FPR(yhats20, Yc, -999, all_classes[c])
+          # all_F11[[m]][c] = measures::F1(yhats[names(yhats)==methods[m]][[1]], Yc, all_classes[c])
+          # all_F12[[m]][c] = measures::F1(yhats2[names(yhats2)==methods[m]][[1]], Yc, all_classes[c])
+          # all_PPV1[[m]][c] = measures::PPV(yhats[names(yhats)==methods[m]][[1]], Yc, all_classes[c])
+          # all_PPV2[[m]][c] = measures::PPV(yhats2[names(yhats2)==methods[m]][[1]], Yc, all_classes[c])
           
-          if(all(yhats[names(yhats)==methods[m]][[1]] != Yc)){  # no true positives
+          
+          if(all(yhats_cut[names(yhats_cut)==methods[m]][[1]] != Yc)){  # no true positives
             all_TPR1[[m]][c] = 0
           }else{
-            all_TPR1[[m]][c] = measures::TPR(yhats[names(yhats)==methods[m]][[1]], Yc, all_classes[c])
+            all_TPR1[[m]][c] = measures::TPR(yhats_cut[names(yhats_cut)==methods[m]][[1]], Yc, all_classes[c])
           }
-          if(all(yhats2[names(yhats2)==methods[m]][[1]] != Yc)){
+          if(all(yhats_cut2[names(yhats_cut2)==methods[m]][[1]] != Yc)){
             all_TPR2[[m]][c] = 0
           }else{
-            all_TPR2[[m]][c] = measures::TPR(yhats2[names(yhats2)==methods[m]][[1]], Yc, all_classes[c])
+            all_TPR2[[m]][c] = measures::TPR(yhats_cut2[names(yhats_cut2)==methods[m]][[1]], Yc, all_classes[c])
           }
-          yhats0 = yhats[names(yhats)==methods[m]][[1]]; yhats0[yhats0!=all_classes[c]]=-999
-          yhats20 = yhats2[names(yhats2)==methods[m]][[1]]; yhats20[yhats20!=all_classes[c]]=-999
+          yhats0 = yhats_cut[names(yhats_cut)==methods[m]][[1]]; yhats0[yhats0!=all_classes[c]]=-999
+          yhats20 = yhats_cut2[names(yhats_cut2)==methods[m]][[1]]; yhats20[yhats20!=all_classes[c]]=-999
           all_FPR1[[m]][c] = measures::FPR(yhats0, Yc, -999, all_classes[c])
           all_FPR2[[m]][c] = measures::FPR(yhats20, Yc, -999, all_classes[c])
-          all_F11[[m]][c] = measures::F1(yhats[names(yhats)==methods[m]][[1]], Yc, all_classes[c])
-          all_F12[[m]][c] = measures::F1(yhats2[names(yhats2)==methods[m]][[1]], Yc, all_classes[c])
-          
+          all_F11[[m]][c] = measures::F1(yhats_cut[names(yhats_cut)==methods[m]][[1]], Yc, all_classes[c])
+          all_F12[[m]][c] = measures::F1(yhats_cut2[names(yhats_cut2)==methods[m]][[1]], Yc, all_classes[c])
+          all_PPV1[[m]][c] = measures::PPV(yhats_cut[names(yhats_cut)==methods[m]][[1]], Yc, all_classes[c])
+          all_PPV2[[m]][c] = measures::PPV(yhats_cut2[names(yhats_cut2)==methods[m]][[1]], Yc, all_classes[c])
         }
       }
-      AUC = lapply(all_AUC,mean); AUC2 = lapply(all_AUC2,mean); br1 = lapply(all_br1,mean); br2 = lapply(all_br2,mean)
-      TPR1 = lapply(all_TPR1,mean); TPR2 = lapply(all_TPR2,mean); FPR1 = lapply(all_FPR1,mean); FPR2 = lapply(all_FPR2,mean)
-      F11 = lapply(all_F11,mean); F12 = lapply(all_F12,mean)
+      
+      AUC = lapply(all_AUC,function(x){mean(x,na.rm=T)}); AUC2 = lapply(all_AUC2,function(x){mean(x,na.rm=T)}); br1 = lapply(all_br1,function(x){mean(x,na.rm=T)}); br2 = lapply(all_br2,function(x){mean(x,na.rm=T)})
+      TPR1 = lapply(all_TPR1,function(x){mean(x,na.rm=T)}); TPR2 = lapply(all_TPR2,function(x){mean(x,na.rm=T)}); FPR1 = lapply(all_FPR1,function(x){mean(x,na.rm=T)}); FPR2 = lapply(all_FPR2,function(x){mean(x,na.rm=T)})
+      F11 = lapply(all_F11,function(x){mean(x,na.rm=T)}); F12 = lapply(all_F12,function(x){mean(x,na.rm=T)}); PPV1 = lapply(all_PPV1,function(x){mean(x,na.rm=T)}); PPV2 = lapply(all_PPV2,function(x){mean(x,na.rm=T)})
     }
     ARI1 = lapply(yhats,function(x){as.numeric(mclust::adjustedRandIndex(c(Ys$test$Y), c(x)))})
     ARI2 = lapply(yhats2,function(x){as.numeric(mclust::adjustedRandIndex(c(Ys$test$Y), c(x)))})
@@ -934,6 +1080,9 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
     kappa1 = lapply(yhats, function(x){measures::KAPPA(c(Ys$test$Y), c(x))})
     kappa2 = lapply(yhats2, function(x){measures::KAPPA(c(Ys$test$Y), c(x))})
     
+    factors_y = levels(factor(c(Ys$test$Y)))
+    mcc1 = lapply(yhats, function(x){yardstick::mcc_vec(truth=factor(c(Ys$test$Y),levels=factors_y), estimate=factor(c(x),levels=factors_y))})
+    mcc2 = lapply(yhats2, function(x){yardstick::mcc_vec(truth=factor(c(Ys$test$Y),levels=factors_y), estimate=factor(c(x),levels=factors_y))})
     if(grepl("SIM",dataset)){
       p = lapply(prhats,function(x){abs(x - c(prs$test)[[1]])})
       p2 = lapply(prhats2,function(x){abs(x - c(prs$test)[[1]])})    ### CAT ONLY
@@ -948,10 +1097,11 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
                            TPR_complete=TPR1, TPR_imputed=TPR2,
                            FPR_complete=FPR1, FPR_imputed=FPR2,
                            F1_complete=F11, F1_imputed=F12,
+                           PPV_complete=PPV1, PPV_imputed=PPV2,
                            truth=prs,
                            all_Briers1=all_br1, all_Briers2=all_br2,
                            Briers1=br1, Briers2=br2, ARI_complete=ARI1, ARI_imputed=ARI2,
-                           kappa1=kappa1, kappa2=kappa2))     # output: imputation, inference, prediction
+                           kappa1=kappa1, kappa2=kappa2, mcc1=mcc1, mcc2=mcc2))     # output: imputation, inference, prediction
     }else{
       res = list(imp=list(L1s=L1s),
                  inf=NA,
@@ -963,8 +1113,9 @@ processResults = function(dataset="SIM",prefix="",data.file.name = NULL, mask.fi
                            TPR_complete=TPR1, TPR_imputed=TPR2,
                            FPR_complete=FPR1, FPR_imputed=FPR2,
                            F1_complete=F11, F1_imputed=F12,
+                           PPV_complete=PPV1, PPV_imputed=PPV2,
                            Briers1=br1, Briers2=br2, ARI_complete=ARI1, ARI_imputed=ARI2,
-                           kappa1=kappa1, kappa2=kappa2))
+                           kappa1=kappa1, kappa2=kappa2, mcc1=mcc1, mcc2=mcc2))
     }
   } else{
     
